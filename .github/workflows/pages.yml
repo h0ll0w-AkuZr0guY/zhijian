@@ -23,6 +23,21 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build
+      - name: Include latest Windows download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p dist/downloads
+          if gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets > /tmp/zhijian-release.json; then
+            gh release download --repo "$GITHUB_REPOSITORY" --pattern 'zhijian_*_x64-setup.exe' --dir dist/downloads
+            python3 - <<'PY'
+          import json, pathlib
+          info=json.loads(pathlib.Path('/tmp/zhijian-release.json').read_text())
+          files=list(pathlib.Path('dist/downloads').glob('*.exe'))
+          if files:
+              pathlib.Path('dist/downloads/desktop.json').write_text(json.dumps({'version':info['tagName'],'file':files[0].name}))
+          PY
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

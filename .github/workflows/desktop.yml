@@ -5,6 +5,7 @@ on:
     tags: ['v*']
 permissions:
   contents: write
+  actions: write
 jobs:
   windows:
     runs-on: windows-latest
@@ -46,3 +47,7 @@ jobs:
           path: |
             src-tauri/target/release/zhijian.exe
             src-tauri/target/release/bundle/nsis/*.exe
+      - name: Refresh the website download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run pages.yml --repo ${{ github.repository }}

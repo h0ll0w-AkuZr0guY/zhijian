@@ -784,5 +784,25 @@ async function initialize(): Promise<void> {
       .register(new URL('sw.js', new URL(import.meta.env.BASE_URL, location.href)).href)
       .catch(() => {});
   document.documentElement.dataset.ready = 'true';
+  const desktopLink = document.createElement('a');
+  desktopLink.id = 'desktopDownload';
+  desktopLink.textContent = '下载 Windows 托盘版 ↗';
+  desktopLink.href = 'https://github.com/h0ll0w-AkuZr0guY/zhijian/releases/latest';
+  desktopLink.target = '_blank';
+  desktopLink.rel = 'noopener';
+  document.querySelector('.left-footer')!.append(document.createElement('br'), desktopLink);
+  if (!window.__TAURI_INTERNALS__)
+    void fetch(new URL('downloads/desktop.json', new URL(import.meta.env.BASE_URL, location.href)))
+      .then((response) => (response.ok ? response.json() : undefined))
+      .then((release: { file: string; version: string } | undefined) => {
+        if (release && /^zhijian_[\d.]+_x64-setup\.exe$/.test(release.file)) {
+          desktopLink.href = new URL(
+            'downloads/' + release.file,
+            new URL(import.meta.env.BASE_URL, location.href),
+          ).href;
+          desktopLink.title = 'Windows 托盘版 ' + release.version;
+        }
+      })
+      .catch(() => {});
 }
 void initialize();
