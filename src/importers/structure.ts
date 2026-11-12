@@ -197,7 +197,8 @@ export function reconstructText(
     if (
       fields.length > 1 &&
       (contactRow || !fields.some((field) => field.startsList)) &&
-      fields.every((field) => field.text.length < 90)
+      fields.every((field) => field.text.length < 160) &&
+      (fields.every((field) => field.text.length < 90) || fields[0].w < 180)
     ) {
       rows.push(fields);
       continue;

@@ -58,7 +58,13 @@ function startElement(page: PDFPage, e: CanvasElement) {
     ),
   );
 }
-async function drawText(page: PDFPage, e: CanvasElement, regular: PDFFont, bold: PDFFont) {
+async function drawText(
+  page: PDFPage,
+  e: CanvasElement,
+  regular: PDFFont,
+  bold: PDFFont,
+  invisible = false,
+) {
   const node = elementNode(e);
   Object.assign(node.style, { left: '0px', top: '0px', position: 'relative', transform: 'none' });
   const host = document.createElement('div');
@@ -133,7 +139,7 @@ async function drawText(page: PDFPage, e: CanvasElement, regular: PDFFont, bold:
         size: run.size,
         font: run.font,
         color: fill,
-        opacity: e.opacity / 100,
+        opacity: invisible ? 0 : e.opacity / 100,
       });
       page.pushOperators(popGraphicsState());
       if (run.underline)
@@ -142,9 +148,36 @@ async function drawText(page: PDFPage, e: CanvasElement, regular: PDFFont, bold:
           end: { x: run.x + run.width, y: run.y + 2 },
           thickness: 0.6,
           color: fill,
-          opacity: e.opacity / 100,
+          opacity: invisible ? 0 : e.opacity / 100,
         });
     }
+  } finally {
+    host.remove();
+  }
+}
+async function rasterText(e: CanvasElement): Promise<{ data: string; height: number }> {
+  const { toPng } = await import('html-to-image');
+  const node = elementNode(e);
+  const host = document.createElement('div');
+  Object.assign(host.style, { position: 'fixed', left: '-20000px', top: '0' });
+  Object.assign(node.style, {
+    position: 'relative',
+    left: '0',
+    top: '0',
+    transform: 'none',
+    opacity: '1',
+  });
+  host.append(node);
+  document.body.append(host);
+  try {
+    const height = Math.max(e.h, node.scrollHeight);
+    node.style.height = height + 'px';
+    const data = await toPng(node, {
+      pixelRatio: 3,
+      skipFonts: true,
+      style: { position: 'relative', left: '0', top: '0' },
+    });
+    return { data, height };
   } finally {
     host.remove();
   }
@@ -219,7 +252,24 @@ export async function exportPdf(
             opacity: e.opacity / 100,
             ...border,
           });
-        await drawText(page, e, regular, bold);
+        const systemFont = e.fontFamily !== 'Noto Sans SC' || /font-family\s*:/i.test(e.html);
+        if (systemFont) {
+          const raster = await rasterText(e),
+            image = await pdf.embedPng(raster.data);
+          page.pushOperators(
+            pushGraphicsState(),
+            concatTransformationMatrix(1, 0, 0, -1, 0, raster.height),
+          );
+          page.drawImage(image, {
+            x: 0,
+            y: 0,
+            width: e.w,
+            height: raster.height,
+            opacity: e.opacity / 100,
+          });
+          page.pushOperators(popGraphicsState());
+        }
+        await drawText(page, e, regular, bold, systemFont);
       } else if (e.type === 'image' && e.src) {
         const image = await pdf.embedPng(await rasterImage(e));
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(1, 0, 0, -1, 0, e.h));

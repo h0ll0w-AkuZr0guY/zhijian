@@ -137,6 +137,7 @@ export interface LayoutOptions {
   fontSize: number;
   onePage: boolean;
   minFontSize: number;
+  fontFamily?: string;
 }
 export const defaultLayout: LayoutOptions = {
   margin: 12,
@@ -145,10 +146,16 @@ export const defaultLayout: LayoutOptions = {
   minFontSize: 9,
 };
 
-function linesFor(text: string, width: number, fontSize: number, bold = false): string[] {
+function linesFor(
+  text: string,
+  width: number,
+  fontSize: number,
+  bold = false,
+  family = 'Noto Sans SC',
+): string[] {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d')!;
-  context.font = `${bold ? '700' : '400'} ${(fontSize * 96) / 72}px "Noto Sans SC", sans-serif`;
+  context.font = `${bold ? '700' : '400'} ${(fontSize * 96) / 72}px "${family}", sans-serif`;
   const lines: string[] = [];
   for (const paragraph of text.split('\n')) {
     let line = '';
@@ -268,11 +275,11 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
       const dateWidth = date ? Math.min(148, width * 0.27) : 0;
       const bodyWidth = width - (date ? dateWidth + 16 : 0);
       const joined = fields.join(' ｜ '),
-        entryLines = linesFor(joined, bodyWidth, fontSize);
+        entryLines = linesFor(joined, bodyWidth, fontSize, false, options.fontFamily);
       const height = ((entryLines.length * fontSize * 96) / 72) * lineHeight + 2;
       if (y + height > PAGE_HEIGHT - margin) addPage();
       const measure = document.createElement('canvas').getContext('2d')!;
-      measure.font = `${(fontSize * 96) / 72}px "Noto Sans SC"`;
+      measure.font = `${(fontSize * 96) / 72}px "${options.fontFamily || 'Noto Sans SC'}"`;
       const widths = fields.map((field) => measure.measureText(field).width + 4);
       if (
         widths.reduce((sum, value) => sum + value, 0) + Math.max(0, fields.length - 1) * 14 <=
@@ -347,7 +354,7 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
       y += height + 12;
       continue;
     }
-    const lines = linesFor(text, width, fontSize, heading);
+    const lines = linesFor(text, width, fontSize, heading, options.fontFamily);
     const linePixels = ((fontSize * 96) / 72) * lineHeight;
     const reserve = heading ? linePixels + 45 : linePixels;
     if (!isSide && y + reserve > PAGE_HEIGHT - margin) addPage();
@@ -421,6 +428,9 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
       );
     current.id ||= id();
   });
+  if (options.fontFamily)
+    for (const current of pages)
+      for (const e of current.elements) if (e.type === 'text') e.fontFamily = options.fontFamily;
   return pages;
 }
 export function layoutContent(

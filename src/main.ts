@@ -19,6 +19,9 @@ import { parseMarkdown, toMarkdown } from './importers/markdown';
 import { reconstructPages } from './importers/structure';
 import { remapRowReferences } from './core/guides';
 import { beautifyPages, beautyThemes, type BeautyTheme } from './layout/beautify';
+import { fitOnePage } from './layout/one-page';
+import { initAI } from './ai/workbench';
+import type { AIAction, AITarget } from './ai/edits';
 import {
   defaultLayout,
   demoNotice,
@@ -104,6 +107,7 @@ function changed(): void {
 function showPage(index: number): void {
   project.activePage = Math.max(0, Math.min(project.pages.length - 1, index));
   const page = project.pages[project.activePage];
+  editor.setDefaultFont(project.fontFamily || 'Noto Sans SC');
   editor.setDocument({
     version: 1,
     name: project.name,
@@ -157,6 +161,7 @@ function beautify(ids?: string[]): void {
     current.blocks,
     theme,
     ids?.length ? new Set(ids) : undefined,
+    current.fontFamily || 'Noto Sans SC',
   );
   if (!result.changed) {
     editor.toast('请先添加或选择可美化的文字');
@@ -172,6 +177,106 @@ function beautify(ids?: string[]): void {
 $('beautify').onclick = () => beautify();
 document.addEventListener('paper-beautify', (event) => {
   beautify((event as CustomEvent<{ ids: string[] }>).detail.ids);
+});
+
+const ai = initAI({ snapshot, apply: applyProject, editor });
+$('aiOpen').onclick = () => ai.open('optimize', { ids: editor.getSelectedIds() });
+document.addEventListener('paper-ai', (event) => {
+  const detail = (event as CustomEvent<{ action: AIAction; target: AITarget }>).detail;
+  ai.open(detail.action, detail.target);
+});
+document.addEventListener('paper-selection-changed', () => {
+  if (!initialized) return;
+  const ids = editor.getSelectedIds();
+  const selected = editor
+    .getDocument()
+    .elements.filter((e) => ids.includes(e.id) && e.type === 'text');
+  $('fontScope').textContent = selected.length ? `所选 ${selected.length} 项` : '整份文档';
+  const picker = $<HTMLSelectElement>('fontPicker');
+  picker.disabled = !!selected.length && selected.every((e) => e.locked);
+  const family = selected[0]?.fontFamily || project.fontFamily || 'Noto Sans SC';
+  if (![...picker.options].some((option) => option.value === family))
+    picker.add(new Option(family, family));
+  picker.value = family;
+});
+$<HTMLSelectElement>('fontPicker').onchange = async (event) => {
+  const family = (event.target as HTMLSelectElement).value;
+  editor.finishEditing();
+  const current = snapshot(),
+    selected = new Set(editor.getSelectedIds());
+  const hasSelectedText = current.pages[current.activePage].elements.some(
+    (e) => selected.has(e.id) && e.type === 'text',
+  );
+  capture();
+  for (const page of current.pages)
+    for (const e of page.elements)
+      if (e.type === 'text' && !e.locked && (!hasSelectedText || selected.has(e.id))) {
+        e.fontFamily = family;
+        const node = document.createElement('div');
+        node.innerHTML = e.html;
+        node
+          .querySelectorAll<HTMLElement>('[style]')
+          .forEach((span) => span.style.removeProperty('font-family'));
+        e.html = node.innerHTML;
+      }
+  if (!hasSelectedText) current.fontFamily = family;
+  applyProject(current, false);
+  await document.fonts.load(`14px "${family}"`);
+  editor.toast(hasSelectedText ? '所选文字字体已更新' : '文档字体已更新，新建文字将沿用此字体');
+};
+const onePageDialog = document.createElement('dialog');
+onePageDialog.className = 'one-page-dialog';
+onePageDialog.id = 'onePageDialog';
+onePageDialog.innerHTML =
+  '<header class="dialog-heading"><div><h2>智能1页</h2><p id="onePageSummary"></p></div><button id="onePageClose" aria-label="关闭一页预览">×</button></header><div id="onePagePreview"></div><footer class="dialog-footer"><span>合并页面空白并等比适配，应用后可撤销</span><button id="onePageApply" class="primary">应用为1页</button></footer>';
+document.body.append(onePageDialog);
+let onePageProject: Project | undefined;
+$('onePage').onclick = () => {
+  editor.finishEditing();
+  const current = snapshot();
+  const result = fitOnePage(current.pages);
+  onePageProject = { ...current, pages: [result.page], activePage: 0 };
+  const wrapper = $('onePagePreview');
+  wrapper.replaceChildren(pageNode(result.page));
+  $('onePageSummary').textContent =
+    `${current.pages.length} 页 → 1 页 A4 · 比例 ${Math.round(result.scale * 100)}%` +
+    (result.minimumFont ? ` · 最小字号 ${result.minimumFont.toFixed(1)} pt` : '');
+  onePageDialog.showModal();
+};
+$('onePageClose').onclick = () => onePageDialog.close();
+$('onePageApply').onclick = () => {
+  if (!onePageProject) return;
+  applyProject(onePageProject);
+  onePageDialog.close();
+  editor.fit();
+  editor.toast('已整理为1页，Ctrl+Z 可撤销');
+};
+function dismissMenus(event: Event): void {
+  document.querySelectorAll<HTMLDetailsElement>('details[data-popup][open]').forEach((menu) => {
+    if (!menu.contains(event.target as Node)) menu.open = false;
+  });
+}
+document.addEventListener('pointerdown', dismissMenus, true);
+document.addEventListener('focusin', dismissMenus);
+document.addEventListener(
+  'keydown',
+  (event) => {
+    const menus = document.querySelectorAll<HTMLDetailsElement>('details[data-popup][open]');
+    if (event.key === 'Escape' && menus.length) {
+      menus.forEach((menu) => (menu.open = false));
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  },
+  true,
+);
+document.addEventListener('click', (event) => {
+  (event.target as Element)
+    .closest('details[data-popup]')
+    ?.querySelectorAll('button')
+    .forEach((button) => {
+      if (button.contains(event.target as Node)) button.closest('details')!.open = false;
+    });
 });
 
 function pageChange(index: number): void {
@@ -511,6 +616,7 @@ function options(): LayoutOptions {
     fontSize,
     minFontSize: Math.min(fontSize, number('layoutMinFont', 7, 20, 9)),
     onePage: $<HTMLInputElement>('layoutOnePage').checked,
+    fontFamily: project.fontFamily,
   };
 }
 let previewTimer: ReturnType<typeof setTimeout>;

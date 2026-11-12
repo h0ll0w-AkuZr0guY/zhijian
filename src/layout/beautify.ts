@@ -177,6 +177,7 @@ export function beautifyPages(
   blocks: ContentBlock[],
   theme: BeautyTheme,
   selection?: Set<string>,
+  fontFamily = 'Noto Sans SC',
 ): { pages: EditorPage[]; changed: number; fittedPages: number } {
   const result = clone(pages),
     palette = beautyThemes[theme];
@@ -230,7 +231,7 @@ export function beautifyPages(
     for (const e of texts) {
       const role = roles.get(e.id)!;
       e.html = cleanInlineStyle(e.html);
-      e.fontFamily = 'Noto Sans SC';
+      e.fontFamily = fontFamily;
       e.fontSize =
         role === 'title'
           ? Math.max(20, bodySize + 11)

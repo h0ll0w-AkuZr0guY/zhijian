@@ -105,17 +105,21 @@ export function download(data: BlobPart, filename: string, type: string): void {
 export async function pagePng(page: EditorPage): Promise<Blob> {
   const { toBlob } = await import('html-to-image');
   const node = pageNode(page);
-  node.style.position = 'fixed';
-  node.style.left = '-20000px';
-  node.style.top = '0';
-  document.body.append(node);
+  const host = document.createElement('div');
+  Object.assign(host.style, { position: 'fixed', left: '-20000px', top: '0' });
+  host.append(node);
+  document.body.append(host);
   try {
     await document.fonts.ready;
     await Promise.all([...node.querySelectorAll('img')].map((image) => image.decode()));
-    const blob = await toBlob(node, { pixelRatio: 2, cacheBust: false });
+    const blob = await toBlob(node, {
+      pixelRatio: 2,
+      cacheBust: false,
+      style: { position: 'relative', left: '0', top: '0' },
+    });
     if (!blob) throw Error('图片生成失败');
     return blob;
   } finally {
-    node.remove();
+    host.remove();
   }
 }

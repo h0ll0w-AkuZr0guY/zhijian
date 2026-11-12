@@ -13,6 +13,7 @@ const MM = 96 / 25.4,
   W = 210 * MM,
   H = 297 * MM;
 const VIEW_STORAGE = 'zhijian-a4-view-v1';
+let defaultFont = 'Noto Sans SC';
 const SHAPE_PATHS = {
   triangle: 'M50 2 L98 98 H2 Z',
   diamond: 'M50 2 L98 50 L50 98 L2 50 Z',
@@ -153,7 +154,7 @@ function base(type, extra = {}) {
     strokeWidth: 0,
     radius: 0,
     dash: 'solid',
-    fontFamily: 'Microsoft YaHei',
+    fontFamily: defaultFont,
     fontSize: 12,
     lineHeight: 1.5,
     textAlign: 'left',
@@ -317,6 +318,7 @@ function renderSelection() {
       : selectionTool === 'marquee'
         ? '拖框完整包围元素，Shift 追加，Alt 减选'
         : '拖动空白处框选，Shift 点选追加';
+  document.dispatchEvent(new CustomEvent('paper-selection-changed'));
 }
 function renderRowGuides() {
   if (!$('showGuides')?.checked) return;
@@ -475,12 +477,8 @@ function properties() {
   });
   $('textProperties').hidden = !list.some((e) => e.type === 'text');
   $('imageProperties').hidden = !list.some((e) => e.type === 'image');
-  $('properties').insertBefore(
-    $('textProperties'),
-    list.length > 1 && list.some((e) => e.type === 'text')
-      ? $('elementType')
-      : $('appearanceHeading'),
-  );
+  $('properties').insertBefore($('textProperties'), $('geometryDetails'));
+  if (list.some((e) => e.type === 'image')) $('appearanceDetails').open = true;
   document.querySelector('[data-prop=rotation]').parentNode.firstChild.textContent =
     list.length > 1 ? '各元素旋转 / °' : '旋转 / °';
   $('editText').disabled = list.length !== 1 || e.type !== 'text' || e.locked;
@@ -1695,7 +1693,25 @@ $('shapes').onclick = () => openAssets('shapes');
 $('backgrounds').onclick = () => openAssets('backgrounds');
 $('closeAssets').onclick = closePopovers;
 
+function captureTextRange() {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) return;
+  const range = selection.getRangeAt(0);
+  const content = range.startContainer.parentElement?.closest('#paper .element.text .content');
+  if (!content || !content.contains(range.endContainer)) return;
+  const prefix = range.cloneRange();
+  prefix.selectNodeContents(content);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  const start = prefix.toString().length;
+  return {
+    elementId: content.closest('.element').dataset.id,
+    start,
+    end: start + range.toString().length,
+    text: range.toString(),
+  };
+}
 function openContextMenu(clientX, clientY, target) {
+  const textRange = captureTextRange();
   closePopovers();
   finishEditing();
   if (target && !selected.has(target.dataset.id)) select(target.dataset.id);
@@ -1852,6 +1868,21 @@ function openContextMenu(clientX, clientY, target) {
     item('背景与边框', '', () => openAssets('backgrounds', point));
   }
   separator();
+  const aiTarget = { ids: [...selected], range: textRange };
+  if (elements().some((e) => e.type === 'text' && !e.locked)) {
+    item(textRange ? 'AI 改写划选文字' : 'AI 优化所选内容', '', () =>
+      document.dispatchEvent(
+        new CustomEvent('paper-ai', {
+          detail: { action: textRange ? 'rewrite' : 'optimize', target: aiTarget },
+        }),
+      ),
+    );
+    item('AI 智能加粗', '', () =>
+      document.dispatchEvent(
+        new CustomEvent('paper-ai', { detail: { action: 'bold', target: aiTarget } }),
+      ),
+    );
+  }
   item(selected.size ? '智能美化所选元素' : '一键智能美化', '', () => {
     document.dispatchEvent(new CustomEvent('paper-beautify', { detail: { ids: [...selected] } }));
   });
@@ -1861,7 +1892,7 @@ function openContextMenu(clientX, clientY, target) {
   menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
 }
 $('viewport').addEventListener('contextmenu', (ev) => {
-  if (ev.target.closest('[contenteditable=true]')) return;
+  if (ev.target.closest('[contenteditable=true]') && !captureTextRange()) return;
   ev.preventDefault();
   let target = ev.target.closest('.element');
   if (!target && selected.size) {
@@ -1932,6 +1963,10 @@ window.paperEditor = {
   finishEditing,
   fit,
   toast,
+  getSelectedIds: () => [...selected],
+  setDefaultFont: (family) => {
+    defaultFont = family;
+  },
 };
 render();
 let initialZoom = 1;

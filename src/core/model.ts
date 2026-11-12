@@ -70,6 +70,7 @@ export interface Project {
   activePage: number;
   blocks: ContentBlock[];
   template: string;
+  fontFamily?: string;
   updatedAt: number;
   source?: { name: string; previews: string[] };
   assets?: Record<string, string>;
@@ -88,6 +89,8 @@ export interface EditorBridge {
   finishEditing(): void;
   fit(): void;
   toast(message: string): void;
+  getSelectedIds(): string[];
+  setDefaultFont(family: string): void;
 }
 declare global {
   interface Window {
