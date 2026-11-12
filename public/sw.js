@@ -1,10 +1,7 @@
 const CACHE = 'zhijian-1.0.0';
+const SHELL = ['./', './icon.svg', './manifest.webmanifest'];
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE)
-      .then((cache) => cache.addAll(['./', './icon.svg', './manifest.webmanifest'])),
-  );
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));
   self.skipWaiting();
 });
 self.addEventListener('activate', (event) => {
@@ -31,7 +28,13 @@ self.addEventListener('fetch', (event) => {
       }
       try {
         const response = await fetch(event.request);
-        if (response.ok) await cache.put(event.request, response.clone());
+        if (response.ok) {
+          try {
+            await cache.put(event.request, response.clone());
+          } catch {
+            /* Storage pressure must not prevent online access. */
+          }
+        }
         return response;
       } catch {
         const cached = await cache.match(event.request);
