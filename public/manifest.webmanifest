@@ -1,0 +1,11 @@
+{
+  "name": "纸间 · 自由文档工作台",
+  "short_name": "纸间",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#edf0ed",
+  "theme_color": "#246b53",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

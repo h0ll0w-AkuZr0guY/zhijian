@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>纸间 · A4 自由画布</title>
+    <meta
+      name="description"
+      content="纸间 · 在浏览器内导入 PDF、Markdown 与图片，识别校对、一键排版并自由编辑 A4 文档。"
+    />
+    <meta name="theme-color" content="#246b53" />
+    <link rel="icon" href="./icon.svg" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-icon">纸</span><strong>纸间</strong><span class="divider"></span
+        ><span>A4 自由画布</span>
+      </div>
+      <input id="docName" aria-label="文档名称" value="我的文档" />
+      <div class="file-actions">
+        <span id="saveStatus" role="status">准备画布</span><button id="libraryOpen">文档库</button
+        ><button id="importOpen" class="primary">导入文档</button><button id="open">打开工程</button
+        ><button id="save">保存工程</button><button id="print" class="primary">下载 PDF</button
+        ><select id="exportFormat" aria-label="更多导出">
+          <option value="">更多导出</option>
+          <option value="png">当前页 PNG</option>
+          <option value="markdown">Markdown</option>
+          <option value="print">打印 / 浏览器 PDF</option>
+        </select>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="left-panel">
+        <div class="panel-title">添加到画布</div>
+        <div class="insert-grid">
+          <button data-add="text"><b>T</b>文字</button><button id="image"><b>▧</b>图片</button
+          ><button id="shapes"><b>◇</b>常用图形</button
+          ><button id="backgrounds"><b>▣</b>背景与边框</button
+          ><button data-add="line"><b>╱</b>线条</button
+          ><button id="blank"><b>＋</b>空白文档</button>
+        </div>
+        <div class="template-card">
+          <span>让内容找到合适的版式</span><strong>模板与一键整理</strong
+          ><small>简历、通知、求职信与项目介绍</small
+          ><button id="resume">选择模板 / 整理内容 ↗</button>
+        </div>
+        <div class="page-navigation">
+          <button id="previousPage" title="上一页">‹</button
+          ><select id="pageSelect" aria-label="选择页面"></select
+          ><button id="nextPage" title="下一页">›</button>
+        </div>
+        <div class="page-actions">
+          <button id="addPage">＋ 添加页</button><button id="duplicatePage">复制页</button
+          ><button id="removePage">删除页</button>
+        </div>
+        <div class="layer-heading">
+          <span class="panel-title">图层</span><span id="layerCount"></span>
+        </div>
+        <div id="layers" class="layers"></div>
+        <div class="left-footer">
+          拖动空白处框选 · Shift 追加<br />Alt 点选组合内元素<br />Ctrl + 滚轮缩放画布
+        </div>
+      </aside>
+      <main class="main">
+        <div class="toolbar">
+          <div>
+            <button id="undo" title="撤销 Ctrl+Z">↶</button
+            ><button id="redo" title="重做 Ctrl+Shift+Z">↷</button><span class="divider"></span
+            ><button id="duplicate" title="制作副本 Ctrl+D">副本</button
+            ><button id="delete" title="删除 Delete">删除</button>
+          </div>
+          <div class="view-tools">
+            <label><input id="snap" type="checkbox" checked /> 对齐吸附</label
+            ><label><input id="grid" type="checkbox" /> 网格</label
+            ><button id="fit" title="完整显示画布 Ctrl+1">适合窗口</button
+            ><span class="zoom-controls"
+              ><button id="zoomOut" aria-label="缩小画布" title="缩小画布 Ctrl+-">−</button
+              ><select id="zoom" aria-label="画布缩放">
+                <option value="0.2">20%</option>
+                <option value="0.5">50%</option>
+                <option value="0.65">65%</option>
+                <option value="0.75">75%</option>
+                <option value="1">100%</option>
+                <option value="1.25">125%</option>
+                <option value="1.5">150%</option>
+                <option value="2">200%</option>
+                <option value="3">300%</option>
+                <option value="4">400%</option></select
+              ><button id="zoomIn" aria-label="放大画布" title="放大画布 Ctrl++">＋</button></span
+            >
+          </div>
+        </div>
+        <div class="interaction-bar">
+          <div class="tool-switch">
+            <button id="selectTool" aria-pressed="true" title="选择和移动 V">
+              选择 <kbd>V</kbd></button
+            ><button id="marqueeTool" aria-pressed="false" title="框选元素 M">
+              框选 <kbd>M</kbd>
+            </button>
+          </div>
+          <select id="selectScope" aria-label="按类型选择元素">
+            <option value="">选择…</option>
+            <option value="text">所有文字</option>
+            <option value="image">所有图片</option>
+            <option value="shape">所有图形</option>
+            <option value="all">全选</option>
+            <option value="invert">反选</option></select
+          ><span id="interactionHint">拖动空白处框选，Shift 点选追加</span
+          ><button id="shortcutHelp" title="查看操作快捷键">快捷键 ?</button>
+        </div>
+        <div id="viewport" class="viewport" tabindex="0" aria-label="画布工作区">
+          <div class="paper-heading">
+            <span id="pageLabel">画布 01</span><span>210 × 297 mm</span>
+          </div>
+          <div id="paperWrap">
+            <div id="paper" aria-label="A4 编辑画布"></div>
+            <div id="selectionOverlay"></div>
+          </div>
+          <div class="canvas-note">拖动自由排版，双击编辑文字</div>
+        </div>
+        <footer class="statusbar">
+          <span id="selectionStatus">未选择元素</span><span>Ctrl + 滚轮缩放 · 空格拖动画布</span>
+        </footer>
+      </main>
+      <aside class="right-panel">
+        <div class="panel-title">属性</div>
+        <div id="emptyProperties">点击画布中的元素<br />调整它的位置与样式</div>
+        <div id="properties" hidden>
+          <div id="selectionSummary" class="selection-summary"></div>
+          <div id="multiActions" hidden>
+            <div class="button-row">
+              <button id="group" title="组合 Ctrl+G">组合</button
+              ><button id="ungroup" title="取消组合 Ctrl+Shift+G">取消组合</button>
+            </div>
+            <p class="property-note">位置移动整个选区，宽高等比缩放选区。</p>
+          </div>
+          <div class="section-label" id="elementType">位置与尺寸</div>
+          <div class="field-grid">
+            <label>X / mm<input data-prop="x" type="number" step="0.1" /></label
+            ><label>Y / mm<input data-prop="y" type="number" step="0.1" /></label
+            ><label>宽 / mm<input data-prop="w" type="number" step="0.1" min="1" /></label
+            ><label>高 / mm<input data-prop="h" type="number" step="0.1" min="1" /></label>
+          </div>
+          <div class="field-grid">
+            <label>旋转 / °<input data-prop="rotation" type="number" step="1" /></label
+            ><label
+              >不透明度 / %<input data-prop="opacity" type="number" min="0" max="100"
+            /></label>
+          </div>
+          <div class="alignment-heading">
+            <span class="section-label">对齐</span
+            ><select id="alignReference" aria-label="对齐参照">
+              <option value="selection">所选元素</option>
+              <option value="page">A4 画布</option>
+            </select>
+          </div>
+          <div class="button-row">
+            <button data-align="left" title="左对齐">左</button
+            ><button data-align="center" title="水平居中">中</button
+            ><button data-align="right" title="右对齐">右</button
+            ><button data-align="top" title="顶端对齐">上</button
+            ><button data-align="middle" title="垂直居中">中</button
+            ><button data-align="bottom" title="底端对齐">下</button>
+          </div>
+          <div id="distributionActions" hidden>
+            <div class="section-label">分布与统一尺寸</div>
+            <div class="button-row">
+              <button id="distributeX">水平等距</button><button id="distributeY">垂直等距</button>
+            </div>
+            <div class="button-row size-actions">
+              <button data-same-size="w">等宽</button><button data-same-size="h">等高</button
+              ><button data-same-size="both">同尺寸</button>
+            </div>
+            <p class="property-note">等距排列支持 3 项及以上。统一尺寸以最先选中的元素为准。</p>
+          </div>
+          <div id="textProperties">
+            <div class="section-label">文字</div>
+            <label
+              >字体<select data-prop="fontFamily">
+                <option value="Noto Sans SC">思源黑体</option>
+                <option value="Microsoft YaHei">微软雅黑</option>
+                <option value="SimSun">宋体</option>
+                <option value="SimHei">黑体</option>
+                <option value="KaiTi">楷体</option>
+                <option value="Arial">Arial</option>
+                <option value="Georgia">Georgia</option>
+                <option value="Times New Roman">Times New Roman</option>
+              </select></label
+            >
+            <div class="field-grid">
+              <label
+                >字号 / pt<input
+                  data-prop="fontSize"
+                  type="number"
+                  min="1"
+                  max="300"
+                  step="0.5" /></label
+              ><label
+                >行距<input data-prop="lineHeight" type="number" min="0.5" max="5" step="0.05"
+              /></label>
+            </div>
+            <div class="button-row text-tools">
+              <button id="bold"><b>B</b></button><button id="italic"><i>I</i></button
+              ><button id="underline"><u>U</u></button><button data-text-align="left">左对齐</button
+              ><button data-text-align="center">居中</button
+              ><button data-text-align="right">右对齐</button>
+            </div>
+            <button id="editText" class="wide">编辑文字</button
+            ><button id="fitText" class="wide">按内容适配高度</button>
+          </div>
+          <div class="section-label" id="appearanceHeading">外观</div>
+          <div class="field-grid">
+            <label id="colorLabel">文字 / 描边<input data-prop="color" type="color" /></label
+            ><label>填充<input data-prop="fill" type="color" /></label
+            ><label
+              >描边 / px<input
+                data-prop="strokeWidth"
+                type="number"
+                min="0"
+                max="40"
+                step="0.5" /></label
+            ><label>圆角 / px<input data-prop="radius" type="number" min="0" max="200" /></label>
+          </div>
+          <label
+            >描边线型<select data-prop="dash">
+              <option value="solid">实线</option>
+              <option value="dashed">虚线</option>
+              <option value="dotted">点线</option>
+            </select></label
+          ><button id="noFill" class="wide">透明填充</button>
+          <div id="imageProperties">
+            <label
+              >图片适配<select data-prop="objectFit">
+                <option value="cover">填满裁切</option>
+                <option value="contain">完整显示</option>
+                <option value="fill">拉伸</option>
+              </select></label
+            ><button id="replaceImage" class="wide">替换图片</button>
+          </div>
+          <div class="section-label">图层顺序</div>
+          <div class="button-row">
+            <button id="forward">上移</button><button id="backward">下移</button
+            ><button id="front">置顶</button><button id="back">置底</button>
+          </div>
+          <button id="lock" class="wide">锁定元素</button>
+        </div>
+        <div class="page-settings">
+          <div class="section-label">纸张</div>
+          <label>背景颜色<input id="pageColor" type="color" value="#ffffff" /></label>
+          <p>导出时使用 A4 纸张、无边距，并开启背景图形。</p>
+        </div>
+      </aside>
+    </div>
+    <input id="projectFile" type="file" accept=".json,.a4canvas,.zhijian" hidden /><input
+      id="imageFile"
+      type="file"
+      accept="image/png,image/jpeg,image/webp,image/gif"
+      hidden
+    />
+    <div id="toast" role="status"></div>
+    <div id="contextMenu" class="context-menu" role="menu" aria-label="画布快捷菜单" hidden></div>
+    <section id="assetLibrary" class="asset-library" aria-label="素材选择" hidden>
+      <header>
+        <strong id="assetTitle">常用图形</strong
+        ><button id="closeAssets" aria-label="关闭素材面板">×</button>
+      </header>
+      <div id="assetContent"></div>
+    </section>
+    <dialog id="shortcutsDialog">
+      <header>
+        <h3>画布操作</h3>
+        <button id="closeShortcuts" aria-label="关闭快捷键说明">×</button>
+      </header>
+      <div class="shortcut-list">
+        <span>移动 / 框选工具</span><kbd>V / M</kbd><span>追加选择 / 移除选择</span
+        ><kbd>Shift + 点击</kbd><span>追加框选 / 减选</span><kbd>Shift / Alt + 拖框</kbd
+        ><span>选择组合内单个元素</span><kbd>Alt + 点击</kbd><span>全选 / 取消选择</span
+        ><kbd>Ctrl + A / Esc</kbd><span>组合 / 取消组合</span><kbd>Ctrl + G / Ctrl + Shift + G</kbd
+        ><span>复制、剪切、粘贴</span><kbd>Ctrl + C / X / V</kbd><span>制作副本 / 删除</span
+        ><kbd>Ctrl + D / Delete</kbd><span>微调 / 快速移动</span><kbd>方向键 / Shift + 方向键</kbd
+        ><span>撤销 / 重做</span><kbd>Ctrl + Z / Ctrl + Shift + Z</kbd><span>画布缩放 / 平移</span
+        ><kbd>Ctrl + 滚轮 / 空格 + 拖动</kbd>
+      </div>
+      <p class="property-note">
+        框选完整包围的元素。批量修改会跳过锁定项，文字属性应用到所选文字。选中组合后拖动角点，可连同文字一起等比缩放。
+      </p>
+    </dialog>
+    <dialog id="confirmDialog">
+      <h3 id="confirmTitle">新建文档</h3>
+      <p>当前内容已自动保存在本机浏览器。继续将替换当前画布，建议先保存工程文件。</p>
+      <div>
+        <button id="confirmCancel">取消</button><button id="confirmSave">保存并继续</button
+        ><button id="confirmContinue" class="primary">继续</button>
+      </div>
+    </dialog>
+    <dialog id="contentDialog" class="content-dialog">
+      <header class="dialog-heading">
+        <div>
+          <h2>内容与版式</h2>
+          <p>导入、校对，再选择合适的模板</p>
+        </div>
+        <button id="closeContent" aria-label="关闭内容窗口">×</button>
+      </header>
+      <div class="import-controls">
+        <button id="chooseImport" class="primary">选择 PDF / Markdown / 图片</button
+        ><button id="pasteMarkdown">粘贴 Markdown</button
+        ><button id="sampleContent">载入示例</button
+        ><label><input id="forceOcr" type="checkbox" />强制 OCR</label
+        ><select id="pdfMode" aria-label="PDF 导入模式">
+          <option value="layout">保留文字位置</option>
+          <option value="reflow">按模板重新排版</option>
+        </select>
+      </div>
+      <input
+        id="importFile"
+        type="file"
+        accept=".pdf,.md,.markdown,.txt,image/png,image/jpeg,image/webp"
+        hidden
+      />
+      <div id="taskStatus" class="task-status" role="status" hidden>
+        <span id="taskMessage"></span><progress id="taskProgress" max="1" value="0"></progress
+        ><button id="cancelTask">取消识别</button>
+      </div>
+      <div class="content-workspace">
+        <section class="content-column">
+          <div class="content-heading">
+            <h3>识别与内容校对</h3>
+            <button id="addBlock">＋ 段落</button>
+          </div>
+          <div id="sourcePreview" class="source-preview" hidden></div>
+          <textarea
+            id="markdownInput"
+            placeholder="粘贴 Markdown，可使用 # 标题、## 栏目和列表"
+            hidden
+          ></textarea
+          ><button id="parseMarkdown" class="wide" hidden>解析 Markdown</button>
+          <div id="blockList" class="block-list"></div>
+        </section>
+        <section class="template-column">
+          <h3>选择模板</h3>
+          <div id="templateList" class="template-list"></div>
+          <div class="layout-options">
+            <label
+              >页边距 / mm<input
+                id="layoutMargin"
+                type="number"
+                value="12"
+                min="5"
+                max="35" /></label
+            ><label
+              >正文 / pt<input
+                id="layoutFont"
+                type="number"
+                value="10.5"
+                min="8"
+                max="24"
+                step="0.5" /></label
+            ><label
+              >最小字号 / pt<input
+                id="layoutMinFont"
+                type="number"
+                value="9"
+                min="7"
+                max="20"
+                step="0.5" /></label
+            ><label><input id="layoutOnePage" type="checkbox" checked />尽量一页</label
+            ><label><input id="keepLocked" type="checkbox" />保留当前锁定元素</label>
+          </div>
+          <div class="preview-heading"><span>排版预览</span><span id="previewCount"></span></div>
+          <div id="layoutPreview" class="layout-preview"></div>
+        </section>
+      </div>
+      <footer class="dialog-footer">
+        <span id="contentSummary">文件在本机浏览器中处理</span
+        ><button id="applyContent" class="primary">应用到画布</button>
+      </footer>
+    </dialog>
+    <dialog id="libraryDialog" class="library-dialog">
+      <header class="dialog-heading">
+        <div>
+          <h2>本机文档库</h2>
+          <p>自动保存到当前浏览器，可下载工程文件备份</p>
+        </div>
+        <button id="closeLibrary" aria-label="关闭文档库">×</button>
+      </header>
+      <div id="documentList"></div>
+    </dialog>
+    <dialog id="nameDialog">
+      <h3>新建空白文档</h3>
+      <label>文档名称<input id="newDocumentName" value="未命名文档" /></label>
+      <div>
+        <button id="cancelNew">取消</button><button id="confirmNew" class="primary">创建</button>
+      </div>
+    </dialog>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
