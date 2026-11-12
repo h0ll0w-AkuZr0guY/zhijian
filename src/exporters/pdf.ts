@@ -8,7 +8,8 @@ import {
   type PDFFont,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { PAGE_HEIGHT, type CanvasElement, type EditorPage } from '../core/model';
+import { subsetFont } from './fonts';
+import { PAGE_HEIGHT, plainText, type CanvasElement, type EditorPage } from '../core/model';
 import { elementNode, shapePaths } from './scene';
 
 let regularBytes: Promise<ArrayBuffer> | undefined, boldBytes: Promise<ArrayBuffer> | undefined;
@@ -32,6 +33,12 @@ function color(css: string) {
   ctx.fillRect(0, 0, 1, 1);
   const values = ctx.getImageData(0, 0, 1, 1).data;
   return rgb(values[0] / 255, values[1] / 255, values[2] / 255);
+}
+async function documentFont(pages: EditorPage[], bold = false): Promise<ArrayBuffer> {
+  const text = pages
+    .flatMap((page) => page.elements.filter((e) => e.type === 'text').map((e) => plainText(e.html)))
+    .join('');
+  return subsetFont(await fontBytes(bold), text);
 }
 function startElement(page: PDFPage, e: CanvasElement) {
   const radians = (e.rotation * Math.PI) / 180,
@@ -172,13 +179,15 @@ export async function exportPdf(
   pdf.registerFontkit(fontkit);
   pdf.setCreator('纸间');
   pdf.setProducer('纸间 · 浏览器本地导出');
-  const regular = await pdf.embedFont(await fontBytes(), { subset: false });
+  const regular = await pdf.embedFont(await documentFont(pages), { subset: false });
   const hasBold = pages.some((p) =>
     p.elements.some(
       (e) => e.type === 'text' && (e.bold || /<b|font-weight:\s*(bold|[6-9]00)/.test(e.html)),
     ),
   );
-  const bold = hasBold ? await pdf.embedFont(await fontBytes(true), { subset: false }) : regular;
+  const bold = hasBold
+    ? await pdf.embedFont(await documentFont(pages, true), { subset: false })
+    : regular;
   for (let index = 0; index < pages.length; index++) {
     progress(`正在生成 PDF 第 ${index + 1} / ${pages.length} 页`);
     const source = pages[index],

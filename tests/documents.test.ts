@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { element, escapeHtml, newPage, newProject, packProject } from '../src/core/model';
 import { parseMarkdown, toMarkdown } from '../src/importers/markdown';
 import { inferSections, templates } from '../src/layout/templates';
+import { readFileSync } from 'node:fs';
+import { createFont } from 'fonteditor-core';
+import { subsetFont } from '../src/exporters/fonts';
 
 describe('Markdown content import', () => {
   it('preserves headings, emphasis and list entries', () => {
@@ -66,5 +69,15 @@ describe('Portable project data', () => {
     expect(new Set(templates.map((template) => template.id)).size).toBe(templates.length);
     expect(templates.filter((template) => template.kind === 'resume')).toHaveLength(4);
     expect(templates.some((template) => template.id === 'notice')).toBe(true);
+  });
+});
+describe('Chinese PDF font embedding', () => {
+  it('retains requested CJK and Latin glyphs in a compact complete TTF', () => {
+    const source = Uint8Array.from(readFileSync('public/fonts/NotoSansSC-Regular.ttf')).buffer;
+    const result = subsetFont(source, '纸间 中文简历 TypeScript');
+    const font = createFont(result, { type: 'ttf' }).get();
+    expect(result.byteLength).toBeLessThan(source.byteLength / 50);
+    for (const char of Array.from('纸间中文简历TypeScript'))
+      expect(font.cmap[char.codePointAt(0)!]).toBeGreaterThan(0);
   });
 });

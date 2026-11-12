@@ -1,4 +1,4 @@
-const CACHE = 'zhijian-1.0.0';
+const CACHE = 'zhijian-1.0.1';
 const SHELL = ['./', './icon.svg', './manifest.webmanifest'];
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

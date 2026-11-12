@@ -28,6 +28,18 @@ jobs:
           releaseBody: 'Windows 桌面版，支持托盘打开、隐藏、识别任务取消和退出。安装包包含离线 OCR 模型。'
           releaseDraft: false
           prerelease: false
+      - name: Name the Windows installer
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $release = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v$version" | ConvertFrom-Json
+          foreach ($asset in $release.assets) {
+            if ($asset.name -like '*setup.exe') {
+              gh api --method PATCH "repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)" -f "name=zhijian_${version}_x64-setup.exe" --silent
+            }
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: zhijian-windows
