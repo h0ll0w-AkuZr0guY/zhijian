@@ -7,3 +7,5 @@
 - Tauri 桌面运行时采用 MIT / Apache-2.0 双许可。
 
 公开示例内容由本项目创建。用户导入的文档由用户保存在其本机浏览器和下载文件中。
+
+运行时 npm 依赖的完整许可证汇编见 [THIRD_PARTY_LICENSES.txt](public/THIRD_PARTY_LICENSES.txt)。

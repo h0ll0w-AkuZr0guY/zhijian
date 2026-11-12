@@ -28,8 +28,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist/downloads
-          if gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets > /tmp/zhijian-release.json; then
-            gh release download --repo "$GITHUB_REPOSITORY" --pattern 'zhijian_*_x64-setup.exe' --dir dist/downloads
+          if gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets > /tmp/zhijian-release.json && gh release download --repo "$GITHUB_REPOSITORY" --pattern 'zhijian_*_x64-setup.exe' --dir dist/downloads; then
             python3 - <<'PY'
           import json, pathlib
           info=json.loads(pathlib.Path('/tmp/zhijian-release.json').read_text())
