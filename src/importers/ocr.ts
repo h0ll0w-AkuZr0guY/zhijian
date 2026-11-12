@@ -10,6 +10,9 @@ export interface RecognitionLine {
   h: number;
 }
 export type Progress = (message: string, value: number) => void;
+export function normalizeRecognizedText(text: string): string {
+  return text.trim().replace(/([\u3400-\u9fff]) +(?=[\u3400-\u9fff])/g, '$1');
+}
 const asset = (path: string) =>
   new URL(path, new URL(import.meta.env.BASE_URL, location.href)).href;
 
@@ -53,7 +56,7 @@ export class OcrSession {
         for (const line of paragraph.lines) {
           if (line.text.trim())
             lines.push({
-              text: line.text.trim(),
+              text: normalizeRecognizedText(line.text),
               confidence: line.confidence,
               x: line.bbox.x0,
               y: line.bbox.y0,

@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "desktop": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "tauri": "tauri"
   },
   "dependencies": {
     "@pdf-lib/fontkit": "^1.1.1",

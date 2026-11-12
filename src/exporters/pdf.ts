@@ -61,12 +61,23 @@ async function drawText(page: PDFPage, e: CanvasElement, regular: PDFFont, bold:
   try {
     const origin = node.getBoundingClientRect(),
       walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    interface Run {
+      text: string;
+      x: number;
+      y: number;
+      width: number;
+      size: number;
+      cssColor: string;
+      font: PDFFont;
+      underline: boolean;
+    }
+    const runs: Run[] = [];
     let textNode: Node | null;
     while ((textNode = walker.nextNode())) {
       const style = getComputedStyle(textNode.parentElement!),
         font = Number(style.fontWeight) >= 600 ? bold : regular;
       const size = parseFloat(style.fontSize),
-        fill = color(style.color);
+        underline = !!e.underline || style.textDecorationLine.includes('underline');
       let offset = 0;
       for (const char of Array.from(textNode.textContent || '')) {
         const range = document.createRange();
@@ -77,19 +88,55 @@ async function drawText(page: PDFPage, e: CanvasElement, regular: PDFFont, bold:
         const rect = range.getBoundingClientRect();
         if (!rect.width || !rect.height) continue;
         const x = rect.x - origin.x,
-          y = rect.y - origin.y + size * 0.9;
-        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(1, 0, 0, -1, x, y));
-        page.drawText(char, { x: 0, y: 0, size, font, color: fill, opacity: e.opacity / 100 });
-        page.pushOperators(popGraphicsState());
-        if (e.underline || style.textDecorationLine.includes('underline'))
-          page.drawLine({
-            start: { x, y: y + 2 },
-            end: { x: x + rect.width, y: y + 2 },
-            thickness: 0.6,
-            color: fill,
-            opacity: e.opacity / 100,
+          y = rect.y - origin.y + size * 0.9,
+          previous = runs.at(-1);
+        if (
+          previous &&
+          previous.font === font &&
+          previous.size === size &&
+          previous.cssColor === style.color &&
+          previous.underline === underline &&
+          Math.abs(previous.y - y) < 0.5 &&
+          Math.abs(previous.x + previous.width - x) < 1
+        ) {
+          previous.text += char;
+          previous.width = x + rect.width - previous.x;
+        } else
+          runs.push({
+            text: char,
+            x,
+            y,
+            width: rect.width,
+            size,
+            cssColor: style.color,
+            font,
+            underline,
           });
       }
+    }
+    for (const run of runs) {
+      const fill = color(run.cssColor);
+      page.pushOperators(
+        pushGraphicsState(),
+        concatTransformationMatrix(1, 0, 0, -1, run.x, run.y),
+      );
+      page.drawText(run.text, {
+        x: 0,
+        y: 0,
+        size: run.size,
+        font: run.font,
+        color: fill,
+        opacity: e.opacity / 100,
+      });
+      page.pushOperators(popGraphicsState());
+      if (run.underline)
+        page.drawLine({
+          start: { x: run.x, y: run.y + 2 },
+          end: { x: run.x + run.width, y: run.y + 2 },
+          thickness: 0.6,
+          color: fill,
+          opacity: e.opacity / 100,
+        });
     }
   } finally {
     host.remove();
@@ -125,13 +172,13 @@ export async function exportPdf(
   pdf.registerFontkit(fontkit);
   pdf.setCreator('纸间');
   pdf.setProducer('纸间 · 浏览器本地导出');
-  const regular = await pdf.embedFont(await fontBytes(), { subset: true });
+  const regular = await pdf.embedFont(await fontBytes(), { subset: false });
   const hasBold = pages.some((p) =>
     p.elements.some(
       (e) => e.type === 'text' && (e.bold || /<b|font-weight:\s*(bold|[6-9]00)/.test(e.html)),
     ),
   );
-  const bold = hasBold ? await pdf.embedFont(await fontBytes(true), { subset: true }) : regular;
+  const bold = hasBold ? await pdf.embedFont(await fontBytes(true), { subset: false }) : regular;
   for (let index = 0; index < pages.length; index++) {
     progress(`正在生成 PDF 第 ${index + 1} / ${pages.length} 页`);
     const source = pages[index],
