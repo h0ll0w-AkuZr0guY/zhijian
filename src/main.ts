@@ -33,6 +33,21 @@ import {
 } from './layout/templates';
 import { download, pageNode, pagePng } from './exporters/scene';
 import type { ImportResult } from './importers/pdf';
+import { continuousPages } from './editor/pages';
+import { guidedForms } from './guided/forms';
+import {
+  inferResume,
+  validResume,
+  buildResume,
+  resumeFromScene,
+  sceneSignature,
+  extrasSignature,
+  captureExtraFrames,
+  syncSceneExtras,
+  newModule,
+  cleanRich,
+  type ResumeDraft,
+} from './guided/model';
 
 const $ = <T extends HTMLElement = HTMLElement>(key: string) => document.getElementById(key) as T;
 const editor = window.paperEditor;
@@ -51,6 +66,8 @@ let selectedTemplate = 'clean',
   previewPages: EditorPage[] = [];
 let task: AbortController | undefined;
 let revision = 0;
+let sidebar = 'forms';
+const pagesView = continuousPages({ activate: (index) => pageChange(index) });
 
 function syncPage(): void {
   if (!initialized) return;
@@ -63,6 +80,7 @@ function syncPage(): void {
   };
 }
 function snapshot(): Project {
+  forms?.flush();
   syncPage();
   return clone(project);
 }
@@ -127,14 +145,80 @@ function renderPages(): void {
   $<HTMLButtonElement>('nextPage').disabled = project.activePage === project.pages.length - 1;
   $<HTMLButtonElement>('removePage').disabled = project.pages.length === 1;
   $('pageLabel').textContent = `${project.name} · 第 ${project.activePage + 1} 页`;
+  pagesView.render(project, editor.getZoom());
 }
-function applyProject(next: Project, record = true): void {
+function ensureResume(current: Project): void {
+  if (!validResume(current.resume)) {
+    current.resume = inferResume(current);
+    return;
+  }
+  if (current.resume!.sceneSignature === sceneSignature(current.pages)) {
+    if (current.resume!.extraSceneSignature !== extrasSignature(current.resume!, current.pages)) {
+      syncSceneExtras(current.resume!, current.pages);
+    }
+    return;
+  }
+  const content = current.pages
+    .flatMap((p) => p.elements)
+    .filter((e) => e.type === 'text' && e.name !== '页码' && e.rotation === 0);
+  if (content.some((e) => e.formField)) {
+    const resume = resumeFromScene(current.resume!, current.pages);
+    const additions = content.filter((e) => !e.formField);
+    if (additions.length) {
+      const module = newModule('custom');
+      module.title = '画布补充内容';
+      module.entries[0].fields.detailsHtml = additions
+        .map((e) => `<p>${cleanRich(e.html)}</p>`)
+        .join('');
+      for (const e of additions) {
+        e.formField = `${module.entries[0].id}:detailsHtml`;
+        e.blockId = `${module.entries[0].id}:detailsHtml:${e.id}`;
+      }
+      resume.modules.push(module);
+    }
+    syncSceneExtras(resume, current.pages);
+    resume.sceneSignature = sceneSignature(current.pages);
+    resume.extraSceneSignature = extrasSignature(resume, current.pages);
+    current.resume = resume;
+  } else current.resume = inferResume(current);
+}
+function showSidebar(name: string): void {
+  sidebar = name;
+  document.body.dataset.side = name;
+  $('resumeForms').hidden = name !== 'forms';
+  $('guidedTemplates').hidden = name !== 'templates';
+  $('aiPanelView').hidden = !['ai', 'interview'].includes(name);
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-side]')
+    .forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.side === name)));
+}
+function updateMode(preserveForm = false): void {
+  const guided = project.editorMode === 'guided';
+  document.body.dataset.mode = guided ? 'guided' : 'canvas';
+  $('guidedMode').setAttribute('aria-pressed', String(guided));
+  $('canvasMode').setAttribute('aria-pressed', String(!guided));
+  editor.setReadOnly(guided);
+  if (guided) {
+    forms?.update(project, !preserveForm);
+    renderGuidedTemplates();
+  }
+  showSidebar(sidebar);
+  document.querySelector('.canvas-note')!.textContent = guided
+    ? '预览随表单自动更新'
+    : '拖动自由排版，双击编辑文字';
+  $('viewportHint').textContent = guided
+    ? 'Ctrl + 滚轮缩放 · 上下滚动预览全部页面'
+    : 'Ctrl + 滚轮缩放 · 空格拖动画布';
+}
+function applyProject(next: Project, record = true, preserveForm = false): void {
   editor.finishEditing();
   if (record) capture();
   restoring = true;
   project = clone(next);
+  if (project.editorMode === 'guided') ensureResume(project);
   initialized = true;
   showPage(project.activePage);
+  updateMode(preserveForm);
   restoring = false;
   void persist();
 }
@@ -148,7 +232,9 @@ window.paperHistory = {
       to = redo ? past : future;
     if (!from.length) return;
     to.push(JSON.stringify(snapshot()));
-    applyProject(JSON.parse(from.pop()!) as Project, false);
+    const restored = JSON.parse(from.pop()!) as Project;
+    restored.editorMode = project.editorMode;
+    applyProject(restored, false);
   },
 };
 
@@ -179,7 +265,113 @@ document.addEventListener('paper-beautify', (event) => {
   beautify((event as CustomEvent<{ ids: string[] }>).detail.ids);
 });
 
-const ai = initAI({ snapshot, apply: applyProject, editor });
+function regenerateResume(current: Project): void {
+  if (!current.resume) return;
+  const generated = buildResume(current.resume, current);
+  current.pages = generated.pages;
+  current.blocks = generated.blocks;
+  current.activePage = Math.min(current.activePage, current.pages.length - 1);
+  current.resume.sceneSignature = sceneSignature(current.pages);
+  current.resume.extraSceneSignature = extrasSignature(current.resume, current.pages);
+  current.resume.extraFrames = captureExtraFrames(current.resume, current.pages);
+}
+const ai = initAI({
+  snapshot,
+  apply: (next) => {
+    if (next.resume && (next.editorMode === 'guided' || next.resume.sceneSignature === '')) {
+      if (next.resume.sceneSignature !== '') next.resume = resumeFromScene(next.resume, next.pages);
+      regenerateResume(next);
+    }
+    applyProject(next);
+  },
+  editor,
+  reveal: (action) => showSidebar(action === 'interview' ? 'interview' : 'ai'),
+  closed: () => showSidebar('forms'),
+});
+const forms = guidedForms({
+  commit: (resume: ResumeDraft) => {
+    syncPage();
+    const next = clone(project);
+    next.resume = resume;
+    regenerateResume(next);
+    applyProject(next, true, true);
+  },
+  ai: (action, target, slot) => ai.open(action, target, slot),
+  beforeRender: () => ai.park(),
+  notify: editor.toast,
+});
+function switchMode(mode: 'guided' | 'canvas'): void {
+  if (project.editorMode === mode || (mode === 'canvas' && !project.editorMode)) return;
+  forms?.flush();
+  editor.finishEditing();
+  ai.close();
+  const top = $('viewport').scrollTop,
+    current = snapshot();
+  current.editorMode = mode;
+  applyProject(current, false);
+  $('viewport').scrollTop = top;
+}
+$('guidedMode').onclick = () => switchMode('guided');
+$('canvasMode').onclick = () => switchMode('canvas');
+document.querySelectorAll<HTMLButtonElement>('[data-side]').forEach(
+  (button) =>
+    (button.onclick = () => {
+      const name = button.dataset.side!;
+      if (['forms', 'templates'].includes(name)) {
+        switchMode('guided');
+        showSidebar(name);
+      } else ai.open(name === 'interview' ? 'interview' : 'optimize');
+    }),
+);
+$('backToCanvasTools').onclick = () => {
+  ai.close();
+  showSidebar('forms');
+};
+function renderGuidedTemplates(): void {
+  const container = $('guidedTemplates');
+  container.replaceChildren();
+  const title = document.createElement('h2');
+  title.textContent = '选择版式';
+  container.append(title);
+  for (const template of templates) {
+    const button = document.createElement('button');
+    button.className = 'guided-template' + (template.id === project.template ? ' selected' : '');
+    const name = document.createElement('strong');
+    name.textContent = template.name;
+    const note = document.createElement('small');
+    note.textContent = template.description;
+    button.style.setProperty('--template-color', template.accent);
+    button.append(name, note);
+    button.onclick = () => {
+      const current = snapshot();
+      current.template = template.id;
+      regenerateResume(current);
+      applyProject(current);
+    };
+    container.append(button);
+  }
+  const label = document.createElement('label');
+  label.className = 'check-label';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = !!project.resume?.onePage;
+  checkbox.onchange = () => {
+    const current = snapshot();
+    if (current.resume) current.resume.onePage = checkbox.checked;
+    regenerateResume(current);
+    applyProject(current);
+  };
+  label.append(checkbox, document.createTextNode('固定为1页，自动等比适配内容'));
+  container.append(label);
+}
+document.addEventListener('paper-zoom-changed', () => {
+  if (initialized) pagesView.render(project, editor.getZoom());
+});
+for (const id of ['addPage', 'duplicatePage', 'removePage']) {
+  const button = $(id);
+  button.classList.add('manual-page-action');
+  document.querySelector('.file-menu')!.append(button);
+}
 $('aiOpen').onclick = () => ai.open('optimize', { ids: editor.getSelectedIds() });
 document.addEventListener('paper-ai', (event) => {
   const detail = (event as CustomEvent<{ action: AIAction; target: AITarget }>).detail;
@@ -236,6 +428,18 @@ $('onePage').onclick = () => {
   const current = snapshot();
   const result = fitOnePage(current.pages);
   onePageProject = { ...current, pages: [result.page], activePage: 0 };
+  if (onePageProject.resume) {
+    onePageProject.resume.onePage = true;
+    onePageProject.resume.sceneSignature = sceneSignature(onePageProject.pages);
+    onePageProject.resume.extraSceneSignature = extrasSignature(
+      onePageProject.resume,
+      onePageProject.pages,
+    );
+    onePageProject.resume.extraFrames = captureExtraFrames(
+      onePageProject.resume,
+      onePageProject.pages,
+    );
+  }
   const wrapper = $('onePagePreview');
   wrapper.replaceChildren(pageNode(result.page));
   $('onePageSummary').textContent =
@@ -295,6 +499,7 @@ $('addPage').onclick = () => {
   project.pages.splice(project.activePage + 1, 0, newPage());
   showPage(project.activePage + 1);
   changed();
+  scrollToActivePage();
 };
 $('duplicatePage').onclick = () => {
   capture();
@@ -314,7 +519,16 @@ $('duplicatePage').onclick = () => {
   project.pages.splice(project.activePage + 1, 0, page);
   showPage(project.activePage + 1);
   changed();
+  scrollToActivePage();
 };
+function scrollToActivePage(): void {
+  const shell = document.querySelector<HTMLElement>(
+    `.page-shell[data-page-id="${project.pages[project.activePage].id}"]`,
+  );
+  if (shell)
+    $('viewport').scrollTop +=
+      shell.getBoundingClientRect().top - $('viewport').getBoundingClientRect().top - 20;
+}
 $('removePage').onclick = () => {
   if (project.pages.length < 2) return;
   capture();
@@ -412,6 +626,7 @@ function currentBlocks(): ContentBlock[] {
   return reconstructPages(clone(project.pages), project.blocks).blocks;
 }
 function openContent(): void {
+  forms?.flush();
   editor.finishEditing();
   syncPage();
   const recovered = reconstructPages(clone(project.pages), project.blocks);
@@ -427,7 +642,10 @@ function openContent(): void {
   schedulePreview();
   $<HTMLDialogElement>('contentDialog').showModal();
 }
-$('resume').onclick = openContent;
+$('resume').onclick = () => {
+  if (project.editorMode === 'guided') showSidebar('templates');
+  else openContent();
+};
 $('importOpen').onclick = () => {
   openContent();
   $<HTMLInputElement>('importFile').click();
@@ -883,8 +1101,8 @@ $<HTMLSelectElement>('exportFormat').onchange = async (event) => {
   try {
     if (value === 'png')
       download(
-        await pagePng(project.pages[project.activePage]),
-        `${project.name}-${project.activePage + 1}.png`,
+        await pagePng(project.pages[pagesView.visiblePage()]),
+        `${project.name}-${pagesView.visiblePage() + 1}.png`,
         'image/png',
       );
     if (value === 'markdown')

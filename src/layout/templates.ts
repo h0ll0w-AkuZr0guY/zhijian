@@ -370,7 +370,7 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
       const slice = lines.slice(cursor, cursor + take);
       const complete = cursor === 0 && take === lines.length;
       const html =
-        complete && block.html && block.type !== 'list' ? block.html : escapeHtml(slice.join('\n'));
+        complete && block.html ? escapeHtml(prefix) + block.html : escapeHtml(slice.join('\n'));
       const height = Math.max(linePixels, take * linePixels + 2);
       if (heading && !firstTitle)
         page!.elements.push(

@@ -39,6 +39,8 @@ export interface CanvasElement {
   hangingIndent?: number;
   rowGuide?: boolean;
   rowAnchorId?: string;
+  formField?: string;
+  formList?: boolean;
 }
 export interface EditorPage {
   id: string;
@@ -71,6 +73,8 @@ export interface Project {
   blocks: ContentBlock[];
   template: string;
   fontFamily?: string;
+  editorMode?: 'canvas' | 'guided';
+  resume?: import('../guided/model').ResumeDraft;
   updatedAt: number;
   source?: { name: string; previews: string[] };
   assets?: Record<string, string>;
@@ -91,6 +95,8 @@ export interface EditorBridge {
   toast(message: string): void;
   getSelectedIds(): string[];
   setDefaultFont(family: string): void;
+  getZoom(): number;
+  setReadOnly(value: boolean): void;
 }
 declare global {
   interface Window {
@@ -180,7 +186,7 @@ export function packProject(project: Project): Project {
   const result = clone(project);
   const assets: Record<string, string> = {};
   const ids = new Map<string, string>();
-  for (const page of result.pages)
+  for (const page of [...result.pages, ...(result.resume?.extras || [])])
     for (const e of page.elements) {
       if (!e.src) continue;
       if (!ids.has(e.src)) ids.set(e.src, `asset-${ids.size + 1}`);
@@ -188,6 +194,14 @@ export function packProject(project: Project): Project {
       assets[e.assetId] = e.src;
       delete e.src;
     }
+  if (result.resume?.profile?.photo) {
+    const photo = result.resume.profile.photo;
+    if (!ids.has(photo)) ids.set(photo, `asset-${ids.size + 1}`);
+    const assetId = ids.get(photo)!;
+    assets[assetId] = photo;
+    result.resume.profile.photoAssetId = assetId;
+    delete result.resume.profile.photo;
+  }
   result.assets = assets;
   return result;
 }
@@ -210,7 +224,10 @@ export function unpackProject(input: unknown, validate: EditorBridge['validate']
     typeof project.name !== 'string'
   )
     throw Error('工程页数或格式无效');
-  for (const page of project.pages) {
+  const extras = Array.isArray(project.resume?.extras)
+    ? project.resume.extras.filter((page) => page && Array.isArray(page.elements))
+    : [];
+  for (const page of [...project.pages, ...extras]) {
     if (!Array.isArray(page.elements)) throw Error('页面元素格式无效');
     for (const e of page.elements)
       if (e.assetId) {
@@ -225,6 +242,10 @@ export function unpackProject(input: unknown, validate: EditorBridge['validate']
     });
     page.elements = valid.elements;
     page.id ||= id();
+  }
+  if (project.resume?.profile?.photoAssetId) {
+    project.resume.profile.photo = project.assets?.[project.resume.profile.photoAssetId] || '';
+    delete project.resume.profile.photoAssetId;
   }
   if (!Array.isArray(project.blocks)) project.blocks = [];
   project.id ||= id();

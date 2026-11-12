@@ -16,6 +16,10 @@
     <header class="topbar">
       <div class="brand"><span class="brand-icon">纸</span><strong>纸间</strong></div>
       <input id="docName" aria-label="文档名称" value="我的文档" />
+      <nav class="mode-switch" aria-label="编辑模式">
+        <button id="guidedMode" aria-pressed="false">内容填写</button
+        ><button id="canvasMode" aria-pressed="true">自由画布</button>
+      </nav>
       <span id="saveStatus" role="status">准备画布</span>
       <div class="file-actions">
         <details class="popup" data-popup>
@@ -61,6 +65,19 @@
           ><button id="nextPage" title="下一页">›</button>
         </div>
         <div class="left-footer">Shift 多选 · 双击编辑文字<br />Ctrl + 滚轮缩放</div>
+      </aside>
+      <aside id="guidedPanel" aria-label="内容与 AI 工作区">
+        <nav class="work-tabs">
+          <button data-side="forms" aria-pressed="true">填写</button
+          ><button data-side="templates">模板</button><button data-side="ai">AI 助手</button
+          ><button data-side="interview">面试</button>
+        </nav>
+        <div id="guidedBody">
+          <section id="resumeForms"></section>
+          <section id="guidedTemplates" hidden></section>
+          <section id="aiPanelView" hidden><div id="aiDockSlot"></div></section>
+        </div>
+        <button id="backToCanvasTools" class="wide">返回画布工具</button>
       </aside>
       <main class="main">
         <div class="toolbar format-toolbar">
@@ -151,7 +168,8 @@
           <div class="canvas-note">拖动自由排版，双击编辑文字</div>
         </div>
         <footer class="statusbar">
-          <span id="selectionStatus">未选择元素</span><span>Ctrl + 滚轮缩放 · 空格拖动画布</span>
+          <span id="selectionStatus">未选择元素</span
+          ><span id="viewportHint">Ctrl + 滚轮缩放 · 空格拖动画布</span>
         </footer>
       </main>
       <aside class="right-panel">

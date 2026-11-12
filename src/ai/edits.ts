@@ -1,5 +1,6 @@
 import { clone, escapeHtml, plainText, type Project } from '../core/model';
 import { elementNode } from '../exporters/scene';
+import { getField, setField, richText, cleanRich, sceneSignature } from '../guided/model';
 export type AIAction = 'optimize' | 'rewrite' | 'bold' | 'interview';
 export interface TextRangeTarget {
   elementId: string;
@@ -10,12 +11,14 @@ export interface TextRangeTarget {
 export interface AITarget {
   ids: string[];
   range?: TextRangeTarget;
+  form?: { entryId: string; field: string; range?: { start: number; end: number; text: string } };
 }
 export interface SourceText {
   id: string;
   text: string;
   html: string;
   range?: TextRangeTarget;
+  form?: { entryId: string; field: string };
 }
 export interface TextEdit {
   id: string;
@@ -25,6 +28,28 @@ export interface TextEdit {
 }
 
 export function sourcesFor(project: Project, target?: AITarget): SourceText[] {
+  if (target?.form && project.resume) {
+    const form = target.form,
+      id = `form:${form.entryId}:${form.field}`;
+    const html = cleanRich(getField(project.resume, form.entryId, form.field));
+    const entry = project.resume.modules
+      .flatMap((m) => m.entries)
+      .find((e) => e.id === form.entryId);
+    const background =
+      form.entryId === 'profile'
+        ? project.resume.profile.headline || ''
+        : Object.entries(entry?.fields || {})
+            .filter(([key]) => key !== 'detailsHtml')
+            .map(([key, value]) => `${key}=${value}`)
+            .join('；');
+    const text =
+      form.range?.text ||
+      richText(html) ||
+      `[待撰写] 已填背景：${background || '尚未填写'}。请提供带[待补充]占位符的填写提纲。`;
+    return text.trim()
+      ? [{ id, text, html, form, range: form.range ? { ...form.range, elementId: id } : undefined }]
+      : [];
+  }
   return project.pages
     .flatMap((page) => page.elements)
     .filter(
@@ -124,6 +149,16 @@ export function applyEdits(project: Project, sources: SourceText[], edits: TextE
   for (const edit of edits.filter((e) => e.enabled)) {
     const source = sources.find((s) => s.id === edit.id),
       e = elements.find((e) => e.id === edit.id);
+    if (source?.form && next.resume) {
+      if (
+        project.resume?.sceneSignature !== sceneSignature(project.pages) ||
+        cleanRich(getField(next.resume, source.form.entryId, source.form.field)) !== source.html
+      )
+        throw Error('内容已变化，请重新生成建议后应用');
+      setField(next.resume, source.form.entryId, source.form.field, editedHtml(source, edit));
+      next.resume.sceneSignature = '';
+      continue;
+    }
     if (!source || !e || e.locked || e.html !== source.html)
       throw Error('画布内容已变化，请重新生成建议后应用');
     e.html = editedHtml(source, edit);

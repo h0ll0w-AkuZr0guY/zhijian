@@ -14,6 +14,7 @@ const MM = 96 / 25.4,
   H = 297 * MM;
 const VIEW_STORAGE = 'zhijian-a4-view-v1';
 let defaultFont = 'Noto Sans SC';
+let readOnly = false;
 const SHAPE_PATHS = {
   triangle: 'M50 2 L98 98 H2 Z',
   diamond: 'M50 2 L98 50 L50 98 L2 50 Z',
@@ -309,9 +310,11 @@ function renderSelection() {
     });
     $('selectionOverlay').append(box);
   }
-  $('selectionStatus').textContent = selected.size
-    ? `已选择 ${selected.size} 个元素${elements().some((e) => e.locked) ? ' · 含锁定元素' : ''}`
-    : '未选择元素';
+  $('selectionStatus').textContent = readOnly
+    ? '内容填写 · 只读预览'
+    : selected.size
+      ? `已选择 ${selected.size} 个元素${elements().some((e) => e.locked) ? ' · 含锁定元素' : ''}`
+      : '未选择元素';
   $('interactionHint').textContent =
     selected.size > 1
       ? `已选 ${selected.size} 项 · 拖动任一选中元素整体移动，右侧批量修改`
@@ -507,6 +510,7 @@ function select(id, additive = false, individual = false) {
   render();
 }
 function startEditing(id) {
+  if (readOnly) return;
   const e = doc.elements.find((e) => e.id === id);
   if (!e || e.locked || e.type !== 'text') return;
   finishEditing();
@@ -559,7 +563,8 @@ function setZoom(value, anchor) {
   $('paperWrap').style.height = H * zoom + 'px';
   $('selectionOverlay').style.setProperty('--handle-size', 10 / zoom + 'px');
   $('selectionOverlay').style.setProperty('--handle-offset', -5 / zoom + 'px');
-  document.querySelector('.paper-heading').style.width = W * zoom + 'px';
+  $('pageLabel').parentElement.style.width = W * zoom + 'px';
+  document.dispatchEvent(new CustomEvent('paper-zoom-changed'));
   $('zoom').querySelector('[data-custom]')?.remove();
   if (![...$('zoom').options].some((o) => Number(o.value) === zoom)) {
     const option = new Option(Math.round(zoom * 100) + '%', zoom);
@@ -585,6 +590,7 @@ function fit() {
   $('viewport').scrollLeft = 0;
 }
 function mutate(fn) {
+  if (readOnly) return;
   $('contextMenu').hidden = true;
   finishEditing();
   checkpoint();
@@ -623,7 +629,8 @@ function add(type, extra = {}) {
 }
 let gesture = null;
 let activeGuideId = null;
-$('paper').addEventListener('pointerdown', (ev) => {
+$('viewport').addEventListener('pointerdown', (ev) => {
+  if (readOnly) return;
   if (ev.button !== 0) return;
   const target = ev.target.closest('.element');
   if (editing && target?.dataset.id === editing) return;
@@ -638,7 +645,8 @@ $('paper').addEventListener('pointerdown', (ev) => {
   ev.preventDefault();
   gesture = { kind: 'move', startX: ev.clientX, startY: ev.clientY, original: clone(movable) };
 });
-$('paper').addEventListener('dblclick', (ev) => {
+$('viewport').addEventListener('dblclick', (ev) => {
+  if (readOnly) return;
   const el = ev.target.closest('.element');
   if (el) startEditing(el.dataset.id);
 });
@@ -848,6 +856,7 @@ window.addEventListener('blur', () => {
 $('viewport').addEventListener(
   'pointerdown',
   (ev) => {
+    if (readOnly) return;
     if (ev.button === 0 && !ev.target.closest('[contenteditable=true]'))
       $('viewport').focus({ preventScroll: true });
     if (ev.button === 1 || (panMode && ev.button === 0)) {
@@ -1409,6 +1418,7 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   if (typing) return;
+  if (readOnly && !(mod && ['z', 'y'].includes(key))) return;
   if (!mod && key === '?') {
     ev.preventDefault();
     $('shortcutsDialog').showModal();
@@ -1892,6 +1902,7 @@ function openContextMenu(clientX, clientY, target) {
   menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
 }
 $('viewport').addEventListener('contextmenu', (ev) => {
+  if (readOnly) return;
   if (ev.target.closest('[contenteditable=true]') && !captureTextRange()) return;
   ev.preventDefault();
   let target = ev.target.closest('.element');
@@ -1966,6 +1977,15 @@ window.paperEditor = {
   getSelectedIds: () => [...selected],
   setDefaultFont: (family) => {
     defaultFont = family;
+  },
+  getZoom: () => zoom,
+  setReadOnly: (value) => {
+    if (readOnly === value) return;
+    finishEditing();
+    readOnly = value;
+    selected.clear();
+    gesture = null;
+    render();
   },
 };
 render();
