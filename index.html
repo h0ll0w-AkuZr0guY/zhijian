@@ -108,8 +108,22 @@
             <option value="shape">所有图形</option>
             <option value="all">全选</option>
             <option value="invert">反选</option></select
-          ><span id="interactionHint">拖动空白处框选，Shift 点选追加</span
-          ><button id="shortcutHelp" title="查看操作快捷键">快捷键 ?</button>
+          ><span id="interactionHint">拖动空白处框选，Shift 点选追加</span>
+          <div class="beautify-tools">
+            <select id="beautifyTheme" aria-label="美化风格">
+              <option value="blue">专业蓝</option>
+              <option value="green">清爽绿</option>
+              <option value="ink">简约黑</option>
+            </select>
+            <button
+              id="beautify"
+              class="primary"
+              title="统一文字层级、配色、对齐和间距，Ctrl+Z 可撤销"
+            >
+              ✦ 一键美化
+            </button>
+          </div>
+          <button id="shortcutHelp" title="查看操作快捷键">快捷键 ?</button>
         </div>
         <div id="viewport" class="viewport" tabindex="0" aria-label="画布工作区">
           <div class="paper-heading">

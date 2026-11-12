@@ -18,6 +18,7 @@ import { deleteDocument, lastDocument, listDocuments, saveDocument } from './sto
 import { parseMarkdown, toMarkdown } from './importers/markdown';
 import { reconstructPages } from './importers/structure';
 import { remapRowReferences } from './core/guides';
+import { beautifyPages, beautyThemes, type BeautyTheme } from './layout/beautify';
 import {
   defaultLayout,
   demoNotice,
@@ -146,6 +147,32 @@ window.paperHistory = {
     applyProject(JSON.parse(from.pop()!) as Project, false);
   },
 };
+
+function beautify(ids?: string[]): void {
+  editor.finishEditing();
+  const current = snapshot();
+  const theme = $<HTMLSelectElement>('beautifyTheme').value as BeautyTheme;
+  const result = beautifyPages(
+    current.pages,
+    current.blocks,
+    theme,
+    ids?.length ? new Set(ids) : undefined,
+  );
+  if (!result.changed) {
+    editor.toast('请先添加或选择可美化的文字');
+    return;
+  }
+  current.pages = result.pages;
+  applyProject(current);
+  editor.toast(
+    `已按「${beautyThemes[theme].name}」美化 ${result.changed} 个文字元素，Ctrl+Z 可撤销` +
+      (result.fittedPages ? ' · 密集页面已适配原有空间' : ''),
+  );
+}
+$('beautify').onclick = () => beautify();
+document.addEventListener('paper-beautify', (event) => {
+  beautify((event as CustomEvent<{ ids: string[] }>).detail.ids);
+});
 
 function pageChange(index: number): void {
   editor.finishEditing();

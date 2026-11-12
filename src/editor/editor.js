@@ -1831,8 +1831,18 @@ function openContextMenu(clientX, clientY, target) {
         first.locked,
       );
   } else {
-    item('撤销', 'Ctrl+Z', () => undo(), !history.length);
-    item('重做', 'Ctrl+Shift+Z', () => undo(true), !future.length);
+    item(
+      '撤销',
+      'Ctrl+Z',
+      () => undo(),
+      window.paperHistory ? !window.paperHistory.canUndo() : !history.length,
+    );
+    item(
+      '重做',
+      'Ctrl+Shift+Z',
+      () => undo(true),
+      window.paperHistory ? !window.paperHistory.canRedo() : !future.length,
+    );
     item('粘贴到此处', 'Ctrl+V', () => pasteSelection(point), !canvasClipboard.length);
     separator();
     item('在此处添加文字', '', () =>
@@ -1842,6 +1852,9 @@ function openContextMenu(clientX, clientY, target) {
     item('背景与边框', '', () => openAssets('backgrounds', point));
   }
   separator();
+  item(selected.size ? '智能美化所选元素' : '一键智能美化', '', () => {
+    document.dispatchEvent(new CustomEvent('paper-beautify', { detail: { ids: [...selected] } }));
+  });
   item('画布原始大小', 'Ctrl+0', () => setZoom(1));
   item('适合窗口', 'Ctrl+1', fit);
   placePopover(menu, clientX, clientY);
@@ -1878,8 +1891,28 @@ $('contextMenu').addEventListener('keydown', (ev) => {
         : (index + (ev.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
   items[next]?.focus();
 });
-document.addEventListener('pointerdown', (ev) => {
+// Close before the canvas capture handler consumes blank-space clicks for marquee selection.
+document.addEventListener(
+  'pointerdown',
+  (ev) => {
+    if (!ev.target.closest('#contextMenu,#assetLibrary,#shapes,#backgrounds')) closePopovers();
+  },
+  true,
+);
+document.addEventListener('focusin', (ev) => {
   if (!ev.target.closest('#contextMenu,#assetLibrary,#shapes,#backgrounds')) closePopovers();
+});
+document.addEventListener(
+  'scroll',
+  (ev) => {
+    if (!(ev.target instanceof Element) || !ev.target.closest('#contextMenu,#assetLibrary'))
+      closePopovers();
+  },
+  true,
+);
+window.addEventListener('blur', closePopovers);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) closePopovers();
 });
 window.addEventListener('resize', closePopovers);
 
