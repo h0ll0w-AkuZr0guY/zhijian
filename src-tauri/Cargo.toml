@@ -1,6 +1,6 @@
 [package]
 name = "zhijian"
-version = "1.0.1"
+version = "1.0.2"
 description = "纸间 · 自由文档工作台"
 authors = ["zhijian contributors"]
 edition = "2021"

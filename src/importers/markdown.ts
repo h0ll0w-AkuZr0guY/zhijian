@@ -78,7 +78,10 @@ export function toMarkdown(blocks: ContentBlock[]): string {
         if (block.markdown) return block.markdown;
         if (block.type === 'heading')
           return `${'#'.repeat(Math.min(6, Math.max(1, block.level || 2)))} ${block.text}`;
-        if (block.type === 'list') return `- ${block.text}`;
+        if (block.type === 'list') {
+          if (/^\d{1,2}[.、)）]\s*/.test(block.text)) return block.text;
+          return `- ${block.text.replace(/^[•●▪◦·]\s*/, '')}`;
+        }
         if (block.type === 'image') return block.src ? `![${block.text}](${block.src})` : '';
         return block.text;
       })

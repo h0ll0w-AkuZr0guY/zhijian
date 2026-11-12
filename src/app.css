@@ -379,3 +379,32 @@ dialog {
     height: auto !important;
   }
 }
+
+.row-guide {
+  position: absolute;
+  border-top: 1px dashed #4a98b4;
+  pointer-events: none;
+  opacity: 0.8;
+}
+.row-guide.active {
+  border-top-style: solid;
+  border-color: #137752;
+  opacity: 1;
+}
+.row-guide-label {
+  position: absolute;
+  white-space: nowrap;
+  background: #e6f2f6;
+  color: #397389;
+  border-radius: 3px;
+  line-height: 1.2;
+}
+.row-guide.active .row-guide-label {
+  background: #d9f1e3;
+  color: #137752;
+}
+.context-menu > button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

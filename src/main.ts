@@ -2,7 +2,6 @@ import './editor/editor.css';
 import './app.css';
 import './editor/editor.js';
 import {
-  blocksFromPages,
   clone,
   element,
   escapeHtml,
@@ -17,6 +16,8 @@ import {
 } from './core/model';
 import { deleteDocument, lastDocument, listDocuments, saveDocument } from './storage/documents';
 import { parseMarkdown, toMarkdown } from './importers/markdown';
+import { reconstructPages } from './importers/structure';
+import { remapRowReferences } from './core/guides';
 import {
   defaultLayout,
   demoNotice,
@@ -169,6 +170,7 @@ $('duplicatePage').onclick = () => {
   const page = clone(project.pages[project.activePage]);
   page.id = id();
   const groups = new Map<string, string>();
+  const originals = clone(page.elements);
   for (const e of page.elements) {
     e.id = id();
     if (e.groupId) {
@@ -176,6 +178,7 @@ $('duplicatePage').onclick = () => {
       e.groupId = groups.get(e.groupId);
     }
   }
+  remapRowReferences(page.elements, originals);
   project.pages.splice(project.activePage + 1, 0, page);
   showPage(project.activePage + 1);
   changed();
@@ -274,37 +277,16 @@ $('closeLibrary').onclick = () => $<HTMLDialogElement>('libraryDialog').close();
 
 function currentBlocks(): ContentBlock[] {
   syncPage();
-  const previous = new Map(project.blocks.map((block) => [block.id, block]));
-  const result: ContentBlock[] = [],
-    seen = new Map<string, ContentBlock>();
-  for (const block of blocksFromPages(project.pages)) {
-    if (block.text.match(/^\d+ \/ \d+$/)) continue;
-    const original = previous.get(block.id);
-    const value = {
-      ...block,
-      type: original?.type || block.type,
-      level: original?.level || block.level,
-      section: original?.section,
-      markdown: original?.text === block.text ? original.markdown : undefined,
-    };
-    if (value.type === 'list') value.text = value.text.replace(/^•\s*/, '');
-    const earlier = seen.get(value.id);
-    if (earlier) {
-      earlier.text += '\n' + value.text;
-      earlier.html = (earlier.html || '') + '<br>' + value.html;
-    } else {
-      result.push(value);
-      seen.set(value.id, value);
-    }
-  }
-  return inferSections(result);
+  return reconstructPages(clone(project.pages), project.blocks).blocks;
 }
 function openContent(): void {
   editor.finishEditing();
-  draft = currentBlocks();
+  syncPage();
+  const recovered = reconstructPages(clone(project.pages), project.blocks);
+  draft = clone(recovered.blocks);
   draftName = project.name;
   draftSource = project.source;
-  imported = undefined;
+  imported = { ...recovered, previews: project.source?.previews || [], name: project.name };
   selectedTemplate = project.template || 'clean';
   $<HTMLSelectElement>('pdfMode').value = 'reflow';
   renderBlocks();
@@ -349,6 +331,20 @@ $('sampleContent').onclick = () => {
   renderSource();
   renderBlocks();
   schedulePreview();
+};
+$('repairText').onclick = () => {
+  if (!imported) {
+    editor.toast('当前内容已按段落整理，可直接选择模板排版');
+    return;
+  }
+  const source = originalPages();
+  const repaired = reconstructPages(clone(source), imported?.blocks || project.blocks);
+  imported = { ...repaired, previews: draftSource?.previews || [], name: draftName };
+  draft = repaired.blocks;
+  $<HTMLSelectElement>('pdfMode').value = 'layout';
+  renderBlocks();
+  schedulePreview();
+  editor.toast('已按段落合并碎片，应用后可撤销');
 };
 $('addBlock').onclick = () => {
   draft.push({ id: id(), type: 'paragraph', text: '新的内容' });
@@ -411,6 +407,9 @@ function renderBlocks(): void {
       if (draft[index + 1] && block.type !== 'image') {
         block.text += '\n' + draft[index + 1].text;
         delete block.html;
+        delete block.markdown;
+        delete block.fields;
+        delete block.role;
         draft.splice(index + 1, 1);
       }
     });
@@ -420,7 +419,15 @@ function renderBlocks(): void {
         draft.splice(
           index,
           1,
-          ...lines.map((text) => ({ ...block, id: id(), text, html: undefined })),
+          ...lines.map((text) => ({
+            ...block,
+            id: id(),
+            text,
+            html: undefined,
+            markdown: undefined,
+            fields: undefined,
+            role: undefined,
+          })),
         );
     });
     action('×', '删除此段', () => draft.splice(index, 1));
@@ -493,6 +500,15 @@ function originalPages(): EditorPage[] {
   for (const block of draft) {
     const matches = pages.flatMap((page) => page.elements).filter((e) => e.blockId === block.id);
     if (matches.length && block.text !== original.get(block.id)?.text) {
+      const fields = block.text.split(/\s*｜\s*/);
+      const textMatches = matches.filter((e) => e.type === 'text').sort((a, b) => a.x - b.x);
+      if (block.role === 'entry' && fields.length === textMatches.length && fields.length > 1) {
+        textMatches.forEach((e, index) => {
+          e.html = escapeHtml(fields[index]);
+          e.name = fields[index].slice(0, 35);
+        });
+        continue;
+      }
       const first = matches[0];
       first.html = escapeHtml(block.text);
       first.whiteSpace = 'pre-wrap';

@@ -36,6 +36,9 @@ export interface CanvasElement {
   dash?: string;
   blockId?: string;
   name?: string;
+  hangingIndent?: number;
+  rowGuide?: boolean;
+  rowAnchorId?: string;
 }
 export interface EditorPage {
   id: string;
@@ -55,6 +58,9 @@ export interface ContentBlock {
   sourceElementIds?: string[];
   section?: string;
   markdown?: string;
+  role?: 'entry' | 'contact' | 'portrait';
+  fields?: string[];
+  sourceBounds?: { x: number; y: number; w: number; h: number };
 }
 export interface Project {
   version: 2;

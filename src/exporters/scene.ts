@@ -38,6 +38,10 @@ export function elementNode(e: CanvasElement): HTMLDivElement {
     letterSpacing: (e.letterSpacing || 0) + 'px',
   });
   if (e.type === 'text') node.innerHTML = e.html;
+  if (e.type === 'text' && e.hangingIndent) {
+    node.style.paddingLeft = e.hangingIndent + 'px';
+    node.style.textIndent = -e.hangingIndent + 'px';
+  }
   if (e.type === 'image' && e.src) {
     const image = new Image();
     image.src = e.src;

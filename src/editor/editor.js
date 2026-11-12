@@ -1,4 +1,13 @@
-'use strict';
+import {
+  baselineOffset,
+  guideY,
+  bindRow,
+  detachGuide,
+  boundMoveMembers,
+  synchronizeRows,
+  remapRowReferences,
+} from '../core/guides';
+import { mergeTextElements } from '../importers/structure';
 const $ = (id) => document.getElementById(id);
 const MM = 96 / 25.4,
   W = 210 * MM,
@@ -173,6 +182,7 @@ function sanitize(html) {
         'text-decoration',
         'color',
         'font-family',
+        'font-size',
         'letter-spacing',
       ];
       const styles = allowed
@@ -235,6 +245,13 @@ function render() {
     if (e.type === 'text' && editing !== e.id) {
       el.innerHTML = '<div class="content">' + e.html + '</div>';
     }
+    if (e.type === 'text') {
+      const content = el.querySelector('.content');
+      if (content) {
+        content.style.paddingLeft = (e.hangingIndent || 0) + 'px';
+        content.style.textIndent = -(e.hangingIndent || 0) + 'px';
+      }
+    }
     if (e.type === 'image') {
       if (!el.firstChild) el.append(document.createElement('img'));
       el.firstChild.src = e.src;
@@ -250,6 +267,7 @@ function render() {
 }
 function renderSelection() {
   $('selectionOverlay').innerHTML = '';
+  renderRowGuides();
   const movable = editableElements();
   const drawBox = (e, aggregate = false) => {
     const box = document.createElement('div');
@@ -300,6 +318,67 @@ function renderSelection() {
         ? '拖框完整包围元素，Shift 追加，Alt 减选'
         : '拖动空白处框选，Shift 点选追加';
 }
+function renderRowGuides() {
+  if (!$('showGuides')?.checked) return;
+  const overlay = $('selectionOverlay');
+  for (const anchor of doc.elements.filter((e) => e.rowGuide)) {
+    const line = document.createElement('div');
+    line.className = 'row-guide' + (activeGuideId === anchor.id ? ' active' : '');
+    line.dataset.anchorId = anchor.id;
+    Object.assign(line.style, {
+      left: '0px',
+      top: guideY(anchor) + 'px',
+      width: W + 'px',
+      borderTopWidth: 1 / zoom + 'px',
+    });
+    const label = document.createElement('span');
+    label.className = 'row-guide-label';
+    const count = doc.elements.filter((e) => e.rowAnchorId === anchor.id).length;
+    const name = anchor.type === 'text' ? anchor.html.replace(/<[^>]*>/g, '').slice(0, 14) : '元素';
+    label.textContent = `绑定 ${count}`;
+    label.title = name + ' · 移动锚点带动同行';
+    Object.assign(label.style, {
+      left: '0px',
+      fontSize: 11 / zoom + 'px',
+      top: -19 / zoom + 'px',
+      padding: `${2 / zoom}px ${5 / zoom}px`,
+    });
+    line.append(label);
+    overlay.append(line);
+  }
+}
+function selectedRowAnchor() {
+  return [...selected]
+    .map((id) => doc.elements.find((e) => e.id === id))
+    .find((e) => e?.type === 'text' && !e.locked);
+}
+function createRowGuide() {
+  const anchor = selectedRowAnchor();
+  if (!anchor) return;
+  mutate(() =>
+    bindRow(
+      anchor,
+      editableElements().filter((e) => e.type === 'text'),
+    ),
+  );
+  $('showGuides').checked = true;
+  renderSelection();
+  toast('已创建绑定基线，拖动其他文字靠近虚线可吸附绑定');
+}
+function mergeSelectedText() {
+  const list = editableElements().filter((e) => e.type === 'text');
+  if (list.length < 2) return;
+  mutate(() => {
+    const merged = mergeTextElements(list),
+      ids = new Set(list.map((e) => e.id));
+    const index = Math.min(...list.map((e) => doc.elements.indexOf(e)));
+    doc.elements = doc.elements.filter((e) => !ids.has(e.id));
+    doc.elements.splice(index, 0, merged);
+    selected = new Set([merged.id]);
+  });
+  toast('文字已合并，可双击整体编辑');
+}
+$('showGuides').onchange = renderSelection;
 function renderLayers() {
   $('layerCount').textContent = doc.elements.length;
   $('layers').innerHTML = '';
@@ -350,6 +429,12 @@ function properties() {
   $('selectionSummary').textContent =
     `已选 ${list.length} 项 · 可修改 ${movable.length} 项` +
     (movable.length < list.length ? ' · 锁定项跳过' : '');
+  if (list.length === 1 && e.rowGuide)
+    $('selectionSummary').textContent +=
+      ' · 基线锚点，同行 ' +
+      doc.elements.filter((item) => item.rowAnchorId === e.id).length +
+      ' 项';
+  if (list.length === 1 && e.rowAnchorId) $('selectionSummary').textContent += ' · 已绑定行基线';
   $('multiActions').hidden = list.length < 2;
   $('distributionActions').hidden = list.length < 2;
   $('group').disabled = movable.length < 2;
@@ -505,7 +590,9 @@ function mutate(fn) {
   $('contextMenu').hidden = true;
   finishEditing();
   checkpoint();
+  const previous = clone(doc.elements);
   fn();
+  synchronizeRows(doc.elements, previous);
   changed();
 }
 function add(type, extra = {}) {
@@ -537,6 +624,7 @@ function add(type, extra = {}) {
   });
 }
 let gesture = null;
+let activeGuideId = null;
 $('paper').addEventListener('pointerdown', (ev) => {
   if (ev.button !== 0) return;
   const target = ev.target.closest('.element');
@@ -547,7 +635,7 @@ $('paper').addEventListener('pointerdown', (ev) => {
   const additive = ev.shiftKey || ev.ctrlKey || ev.metaKey;
   if (additive || ev.altKey || !selected.has(id)) select(id, additive, ev.altKey);
   if (additive) return;
-  const movable = elements().filter((e) => !e.locked);
+  const movable = boundMoveMembers(editableElements(), doc.elements);
   if (!movable.length) return;
   ev.preventDefault();
   gesture = { kind: 'move', startX: ev.clientX, startY: ev.clientY, original: clone(movable) };
@@ -611,14 +699,16 @@ window.addEventListener('pointermove', (ev) => {
     checkpoint();
     gesture.committed = true;
   }
+  const beforeFrame = clone(doc.elements);
   const dx = (ev.clientX - gesture.startX) / zoom,
     dy = (ev.clientY - gesture.startY) / zoom;
   if (gesture.kind === 'move') {
     let moveX = dx,
       moveY = dy;
     if ($('snap').checked && !ev.altKey) {
-      const first = gesture.original[0],
-        others = doc.elements.filter((e) => !selected.has(e.id));
+      const movingIds = new Set(gesture.original.map((e) => e.id));
+      const first = gesture.original.find((e) => selected.has(e.id)) || gesture.original[0],
+        others = doc.elements.filter((e) => !movingIds.has(e.id));
       const snapDelta = (v, size, targets) => {
         let result = 0,
           best = 5;
@@ -642,6 +732,24 @@ window.addEventListener('pointermove', (ev) => {
         H,
         ...others.flatMap((e) => [e.y, e.y + e.h, e.y + e.h / 2]),
       ]);
+    }
+    const lead = gesture.original.find((e) => selected.has(e.id)) || gesture.original[0];
+    const movingIds = new Set(gesture.original.map((e) => e.id));
+    gesture.rowCandidate = null;
+    activeGuideId = null;
+    if ($('snap').checked && !ev.altKey && lead.type === 'text' && !lead.rowGuide) {
+      const candidate = doc.elements
+        .filter((e) => e.rowGuide && !movingIds.has(e.id))
+        .map((anchor) => ({
+          anchor,
+          distance: Math.abs(guideY(anchor) - (lead.y + dy + baselineOffset(lead))),
+        }))
+        .sort((a, b) => a.distance - b.distance)[0];
+      if (candidate && candidate.distance <= 8 / zoom) {
+        moveY = guideY(candidate.anchor) - lead.y - baselineOffset(lead);
+        gesture.rowCandidate = candidate.anchor.id;
+        activeGuideId = candidate.anchor.id;
+      }
     }
     const minX = Math.min(...gesture.original.map((e) => e.x)),
       maxX = Math.max(...gesture.original.map((e) => e.x + e.w));
@@ -691,9 +799,31 @@ window.addEventListener('pointermove', (ev) => {
       y: o.y + (o.h - h) / 2 + cx * Math.sin(radians) + cy * Math.cos(radians),
     });
   }
+  if (gesture.kind !== 'move') synchronizeRows(doc.elements, beforeFrame);
   render();
 });
 window.addEventListener('pointerup', () => {
+  if (gesture?.kind === 'move' && gesture.committed) {
+    const movedIds = new Set(gesture.original.map((e) => e.id));
+    const anchor = doc.elements.find((e) => e.id === gesture.rowCandidate);
+    if (anchor) {
+      bindRow(
+        anchor,
+        doc.elements.filter((e) => movedIds.has(e.id) && e.type === 'text'),
+      );
+      toast('已吸附并绑定到该行基线');
+    } else
+      for (const child of doc.elements.filter(
+        (e) => movedIds.has(e.id) && e.rowAnchorId && !movedIds.has(e.rowAnchorId),
+      )) {
+        const owner = doc.elements.find((e) => e.id === child.rowAnchorId);
+        if (!owner || Math.abs(guideY(owner) - guideY(child)) > 8 / zoom) delete child.rowAnchorId;
+      }
+    synchronizeRows(doc.elements);
+  }
+  activeGuideId = null;
+  if (gesture?.committed) render();
+  else renderSelection();
   panGesture = null;
   if (marquee) {
     marquee = null;
@@ -809,7 +939,7 @@ document.querySelectorAll('[data-prop]').forEach(
         targets.forEach((e) => {
           e[key] = value;
           if (key === 'strokeWidth' && e.type === 'line') e.h = Math.max(0.5, value);
-          const cssKey = { fontFamily: 'font-family', color: 'color' }[key];
+          const cssKey = { fontFamily: 'font-family', fontSize: 'font-size', color: 'color' }[key];
           if (cssKey && e.type === 'text') e.html = clearInlineStyle(e.html, cssKey);
         });
       });
@@ -906,7 +1036,7 @@ function copyElements(source, dx, dy) {
     groupCounts = new Map();
   for (const e of source)
     if (e.groupId) groupCounts.set(e.groupId, (groupCounts.get(e.groupId) || 0) + 1);
-  return source.map((original) => {
+  const copies = source.map((original) => {
     const e = {
       ...clone(original),
       id: uid(),
@@ -920,6 +1050,8 @@ function copyElements(source, dx, dy) {
     } else delete e.groupId;
     return e;
   });
+  remapRowReferences(copies, source);
+  return copies;
 }
 function groupSelection() {
   const list = editableElements();
@@ -1343,7 +1475,7 @@ window.addEventListener('keydown', (ev) => {
     return;
   }
   if (ev.key.startsWith('Arrow') && selected.size) {
-    const list = editableElements();
+    const list = boundMoveMembers(editableElements(), doc.elements);
     if (!list.length) return;
     ev.preventDefault();
     const step = ev.shiftKey ? 10 : 1,
@@ -1599,6 +1731,38 @@ function openContextMenu(clientX, clientY, target) {
       editable = elements().some((e) => !e.locked);
     if (first.type === 'text' && selected.size === 1)
       item('编辑文字', '双击', () => startEditing(first.id), first.locked);
+    const rowAnchor = selectedRowAnchor();
+    if (rowAnchor) {
+      if (selected.size === 1 && rowAnchor.rowGuide)
+        item('移除绑定基线', '', () => mutate(() => detachGuide(rowAnchor, doc.elements)));
+      else
+        item(selected.size > 1 ? '将所选文字绑定成一行' : '创建横向绑定基线', '', createRowGuide);
+      const candidates = doc.elements
+        .filter((e) => e.rowGuide && !selected.has(e.id))
+        .sort(
+          (a, b) =>
+            Math.abs(guideY(a) - guideY(rowAnchor)) - Math.abs(guideY(b) - guideY(rowAnchor)),
+        )
+        .slice(0, 3);
+      for (const anchor of candidates) {
+        const name = anchor.html.replace(/<[^>]*>/g, '').slice(0, 12);
+        item('绑定到基线 · ' + name, '', () =>
+          mutate(() =>
+            bindRow(
+              anchor,
+              editableElements().filter((e) => e.type === 'text'),
+            ),
+          ),
+        );
+      }
+    }
+    if (editableElements().some((e) => e.rowAnchorId))
+      item('解除行绑定', '', () =>
+        mutate(() => editableElements().forEach((e) => delete e.rowAnchorId)),
+      );
+    if (editableElements().filter((e) => e.type === 'text').length > 1)
+      item('合并为一个文字框', '', mergeSelectedText);
+    separator();
     item('剪切', 'Ctrl+X', () => copySelection(true), !editable);
     item('复制', 'Ctrl+C', () => copySelection());
     item('粘贴到此处', 'Ctrl+V', () => pasteSelection(point), !canvasClipboard.length);
@@ -1725,6 +1889,7 @@ window.paperEditor = {
   setDocument: (value) => {
     const previous = [...selected];
     doc = validateProject(clone(value));
+    synchronizeRows(doc.elements);
     selected = new Set(previous.filter((id) => doc.elements.some((e) => e.id === id)));
     editing = null;
     gesture = null;

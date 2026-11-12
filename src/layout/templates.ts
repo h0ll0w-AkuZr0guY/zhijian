@@ -9,6 +9,7 @@ import {
   type ContentBlock,
   type EditorPage,
 } from '../core/model';
+import { normalizeContent } from '../importers/structure';
 
 export interface Template {
   id: string;
@@ -203,16 +204,53 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
       );
   };
   addPage();
+  const portrait =
+    template.kind === 'resume'
+      ? blocks.find((block) => block.type === 'image' && block.role === 'portrait' && block.src)
+      : undefined;
+  const firstSection = blocks.findIndex(
+    (block) => block.type === 'heading' && (block.level || 2) > 1,
+  );
+  const headerIds = new Set(
+    blocks
+      .slice(0, firstSection < 0 ? blocks.length : firstSection)
+      .filter((block) => block.type !== 'image')
+      .map((block) => block.id),
+  );
+  if (portrait)
+    page!.elements.push(
+      element('image', {
+        x: PAGE_WIDTH - margin - 82,
+        y: margin + 14,
+        w: 82,
+        h: 104,
+        src: portrait.src,
+        objectFit: 'cover',
+        blockId: portrait.id,
+        name: '证件照',
+      }),
+    );
   for (const block of blocks) {
+    if (block === portrait) continue;
     const firstTitle = block.type === 'heading' && block.level === 1;
     const heading = block.type === 'heading';
+    if (template.kind === 'resume' && heading && !firstTitle && portrait && pages.length === 1)
+      y = Math.max(y, margin + 126);
     const isSide =
       !!sidebar &&
       !firstTitle &&
       (/基本信息|联系方式|专业技能|个人技能/.test(block.section || '') ||
         (pages.length === 1 && y < margin + 120 && !heading));
     const x = firstTitle ? margin : isSide ? margin : mainX;
-    const width = firstTitle ? fullWidth : isSide ? sidebar - 10 : mainWidth;
+    const headerWidth =
+      portrait && pages.length === 1 && headerIds.has(block.id) ? fullWidth - 104 : fullWidth;
+    const width = firstTitle
+      ? headerWidth
+      : isSide
+        ? sidebar - 10
+        : headerIds.has(block.id) && portrait
+          ? headerWidth
+          : mainWidth;
     const fontSize = firstTitle
       ? template.kind === 'document'
         ? 25
@@ -220,9 +258,77 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
       : heading
         ? options.fontSize + 2
         : options.fontSize;
-    const lineHeight = heading ? 1.3 : 1.55;
-    const prefix = block.type === 'list' ? '• ' : '';
+    const lineHeight = heading ? 1.3 : template.kind === 'resume' ? 1.32 : 1.55;
+    const prefix =
+      block.type === 'list' && !/^(?:[•●▪◦·]|\d{1,2}[.、)）])\s*/.test(block.text) ? '• ' : '';
     const text = prefix + block.text;
+    if (block.role === 'entry' && block.fields?.length) {
+      const date = block.fields.find((field) => /^(?:19|20)\d{2}.*[-—–~至]/.test(field));
+      const fields = block.fields.filter((field) => field !== date);
+      const dateWidth = date ? Math.min(148, width * 0.27) : 0;
+      const bodyWidth = width - (date ? dateWidth + 16 : 0);
+      const joined = fields.join(' ｜ '),
+        entryLines = linesFor(joined, bodyWidth, fontSize);
+      const height = ((entryLines.length * fontSize * 96) / 72) * lineHeight + 2;
+      if (y + height > PAGE_HEIGHT - margin) addPage();
+      const measure = document.createElement('canvas').getContext('2d')!;
+      measure.font = `${(fontSize * 96) / 72}px "Noto Sans SC"`;
+      const widths = fields.map((field) => measure.measureText(field).width + 4);
+      if (
+        widths.reduce((sum, value) => sum + value, 0) + Math.max(0, fields.length - 1) * 14 <=
+        bodyWidth
+      ) {
+        let fieldX = x;
+        fields.forEach((field, index) => {
+          page!.elements.push(
+            element('text', {
+              x: fieldX,
+              y,
+              w: widths[index],
+              h: height,
+              fontSize,
+              lineHeight,
+              html: escapeHtml(field),
+              bold: index === 0,
+              blockId: block.id,
+              name: field.slice(0, 35),
+            }),
+          );
+          fieldX += widths[index] + 14;
+        });
+      } else
+        page!.elements.push(
+          element('text', {
+            x,
+            y,
+            w: bodyWidth,
+            h: height,
+            fontSize,
+            lineHeight,
+            html: escapeHtml(joined),
+            blockId: block.id,
+            name: joined.slice(0, 35),
+          }),
+        );
+      if (date)
+        page!.elements.push(
+          element('text', {
+            x: x + width - dateWidth,
+            y,
+            w: dateWidth,
+            h: height,
+            fontSize: fontSize - 0.5,
+            lineHeight,
+            textAlign: 'right',
+            html: escapeHtml(date),
+            color: '#748078',
+            blockId: block.id,
+            name: date,
+          }),
+        );
+      y += height + 5;
+      continue;
+    }
     if (block.type === 'image' && block.src) {
       const height = 130;
       if (y + height > PAGE_HEIGHT - margin) addPage();
@@ -290,8 +396,9 @@ function arrange(blocks: ContentBlock[], template: Template, options: LayoutOpti
           whiteSpace: 'pre-wrap',
         }),
       );
-      if (isSide) sideY += height + (heading ? 12 : 9);
-      else y += height + (firstTitle ? 14 : heading ? 10 : 9);
+      const gap = template.kind === 'resume' ? (block.role === 'contact' ? 2 : 4) : 9;
+      if (isSide) sideY += height + (heading ? 10 : gap);
+      else y += height + (firstTitle ? 10 : heading ? 8 : gap);
       cursor += take;
       if (cursor < lines.length) addPage();
     }
@@ -321,6 +428,7 @@ export function layoutContent(
   templateId: string,
   options = defaultLayout,
 ): EditorPage[] {
+  blocks = normalizeContent(blocks);
   const template = templates.find((item) => item.id === templateId) || templates[0];
   let size = options.fontSize;
   let pages = arrange(blocks, template, { ...options, fontSize: size });

@@ -3,7 +3,6 @@ import type { TextItem } from 'pdfjs-dist/types/src/display/api';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {
   element,
-  escapeHtml,
   id,
   newPage,
   PAGE_HEIGHT,
@@ -11,7 +10,8 @@ import {
   type ContentBlock,
   type EditorPage,
 } from '../core/model';
-import { OcrSession, recognizedBlocks, type Progress } from './ocr';
+import { OcrSession, type Progress } from './ocr';
+import { reconstructText, normalizeContent, readingOrder, type TextFragment } from './structure';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 export interface ImportResult {
@@ -22,41 +22,6 @@ export interface ImportResult {
 }
 const asset = (path: string) =>
   new URL(path, new URL(import.meta.env.BASE_URL, location.href)).href;
-
-function textBlocks(
-  items: { text: string; x: number; y: number; height: number; elementId: string }[],
-  page: number,
-): ContentBlock[] {
-  const lines: { text: string; x: number; y: number; height: number; elementIds: string[] }[] = [];
-  for (const item of [...items].sort((a, b) => a.y - b.y || a.x - b.x)) {
-    const previous = lines.at(-1);
-    if (
-      previous &&
-      Math.abs(item.y - previous.y) < Math.max(3, item.height * 0.3) &&
-      item.x >= previous.x &&
-      item.x - previous.x < 650
-    ) {
-      previous.text += ' ' + item.text;
-      previous.elementIds.push(item.elementId);
-    } else lines.push({ ...item, elementIds: [item.elementId] });
-  }
-  return lines.map((line, index) => ({
-    id: id(),
-    type:
-      index === 0 && line.height >= 17
-        ? 'heading'
-        : /^(教育|工作|实习|项目|研究|技能|专业|荣誉|获奖|个人|科研|联系).{0,10}$/.test(
-              line.text.trim(),
-            )
-          ? 'heading'
-          : 'paragraph',
-    level: index === 0 ? 1 : 2,
-    text: line.text,
-    html: escapeHtml(line.text),
-    sourcePage: page,
-    sourceElementIds: line.elementIds,
-  }));
-}
 
 async function extractImages(
   page: PDFPageProxy,
@@ -197,74 +162,56 @@ export async function importPdf(
         const lines = await ocr.recognize(raster);
         const factor = scale / rasterViewport.scale;
         page.elements = [];
-        const recognized = recognizedBlocks(lines, index);
-        blocks.push(...recognized);
-        lines.forEach((line, i) =>
-          page.elements.push(
-            element('text', {
-              x: offsetX + line.x * factor,
-              y: offsetY + line.y * factor,
-              w: Math.max(30, line.w * factor + 5),
-              h: Math.max(15, line.h * factor * 1.35),
-              fontSize: Math.max(7, line.h * factor * 0.72),
-              lineHeight: 1.25,
-              html: escapeHtml(line.text),
-              blockId: recognized[i]?.id,
-              name: line.confidence < 80 ? '待校对 OCR 文字' : 'OCR 文字',
-            }),
-          ),
+        const reconstructed = reconstructText(
+          lines.map((line) => ({
+            id: id(),
+            text: line.text,
+            x: offsetX + line.x * factor,
+            y: offsetY + line.y * factor,
+            w: Math.max(20, line.w * factor),
+            h: Math.max(10, line.h * factor),
+            fontSize: Math.max(7, line.h * factor * 0.72),
+            confidence: line.confidence,
+          })),
+          index,
         );
+        page.elements = reconstructed.elements;
+        blocks.push(...reconstructed.blocks);
       } else {
-        const semantic: {
-          text: string;
-          x: number;
-          y: number;
-          height: number;
-          elementId: string;
-        }[] = [];
+        const fragments: TextFragment[] = [];
         for (const item of texts) {
           const transform = Util.transform(viewport.transform, item.transform);
           const height = Math.hypot(transform[2], transform[3]);
-          const x = offsetX + transform[4] * scale,
-            y = offsetY + (transform[5] - height * 0.86) * scale;
           const bold = /bold|black|heavy/i.test(
             item.fontName + ' ' + (content.styles[item.fontName]?.fontFamily || ''),
           );
-          page.elements.push(
-            element('text', {
-              x,
-              y,
-              w: Math.max(3, item.width * scale + 2),
-              h: Math.max(10, height * scale * 1.35),
-              fontSize: Math.max(3, height * scale * 0.75),
-              lineHeight: 1.15,
-              bold,
-              html: escapeHtml(item.str),
-              whiteSpace: 'pre',
-              name: item.str.slice(0, 35),
-            }),
-          );
-          semantic.push({
+          fragments.push({
+            id: id(),
             text: item.str,
-            x,
-            y,
-            height: height * scale,
-            elementId: page.elements.at(-1)!.id,
+            x: offsetX + transform[4] * scale,
+            y: offsetY + (transform[5] - height * 0.86) * scale,
+            w: Math.max(1, item.width * scale),
+            h: Math.max(10, height * scale * 1.2),
+            fontSize: Math.max(3, height * scale * 0.75),
+            baseline: offsetY + transform[5] * scale,
+            bold,
           });
         }
-        const extracted = textBlocks(semantic, index);
-        for (const block of extracted)
-          for (const e of page.elements)
-            if (block.sourceElementIds?.includes(e.id)) e.blockId = block.id;
-        blocks.push(...extracted);
+        const reconstructed = reconstructText(fragments, index);
+        page.elements.push(...reconstructed.elements);
+        blocks.push(...reconstructed.blocks);
         for (const e of page.elements.filter((e) => e.type === 'image')) {
           e.blockId = id();
+          const portrait =
+            e.x > 470 && e.y < 250 && e.h < 230 && e.w / e.h > 0.4 && e.w / e.h < 1.3;
           blocks.push({
             id: e.blockId,
             type: 'image',
-            text: 'PDF 图片',
+            text: portrait ? '证件照' : 'PDF 图片',
             src: e.src,
             sourcePage: index,
+            role: portrait ? 'portrait' : undefined,
+            sourceBounds: { x: e.x, y: e.y, w: e.w, h: e.h },
           });
         }
       }
@@ -272,7 +219,12 @@ export async function importPdf(
       source.cleanup();
     }
     progress('PDF 识别完成，可校对文字和排版', 1);
-    return { pages, blocks, previews, name: file.name.replace(/\.pdf$/i, '') };
+    return {
+      pages,
+      blocks: normalizeContent(readingOrder(blocks)),
+      previews,
+      name: file.name.replace(/\.pdf$/i, ''),
+    };
   } finally {
     signal.removeEventListener('abort', onAbort);
     await ocr.close();
@@ -295,23 +247,23 @@ export async function importImage(
   const session = new OcrSession(signal, progress);
   try {
     const lines = await session.recognize(canvas),
-      page = newPage(),
-      blocks = recognizedBlocks(lines, 1);
+      page = newPage();
     const scale = Math.min(PAGE_WIDTH / canvas.width, PAGE_HEIGHT / canvas.height);
-    lines.forEach((line, index) =>
-      page.elements.push(
-        element('text', {
-          x: line.x * scale,
-          y: line.y * scale,
-          w: Math.max(30, line.w * scale + 5),
-          h: Math.max(15, line.h * scale * 1.35),
-          fontSize: Math.max(7, line.h * scale * 0.72),
-          lineHeight: 1.25,
-          html: escapeHtml(line.text),
-          blockId: blocks[index]?.id,
-        }),
-      ),
+    const reconstructed = reconstructText(
+      lines.map((line) => ({
+        id: id(),
+        text: line.text,
+        x: line.x * scale,
+        y: line.y * scale,
+        w: Math.max(20, line.w * scale),
+        h: Math.max(10, line.h * scale),
+        fontSize: Math.max(7, line.h * scale * 0.72),
+        confidence: line.confidence,
+      })),
+      1,
     );
+    page.elements = reconstructed.elements;
+    const blocks = reconstructed.blocks;
     return {
       pages: [page],
       blocks,

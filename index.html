@@ -74,6 +74,7 @@
           <div class="view-tools">
             <label><input id="snap" type="checkbox" checked /> 对齐吸附</label
             ><label><input id="grid" type="checkbox" /> 网格</label
+            ><label><input id="showGuides" type="checkbox" checked /> 基线</label
             ><button id="fit" title="完整显示画布 Ctrl+1">适合窗口</button
             ><span class="zoom-controls"
               ><button id="zoomOut" aria-label="缩小画布" title="缩小画布 Ctrl+-">−</button
@@ -306,6 +307,7 @@
       <div class="import-controls">
         <button id="chooseImport" class="primary">选择 PDF / Markdown / 图片</button
         ><button id="pasteMarkdown">粘贴 Markdown</button
+        ><button id="repairText" title="重新合并已导入的碎片文字">合并碎片</button
         ><button id="sampleContent">载入示例</button
         ><label><input id="forceOcr" type="checkbox" />强制 OCR</label
         ><select id="pdfMode" aria-label="PDF 导入模式">
