@@ -10,7 +10,8 @@ import {
 import fontkit from '@pdf-lib/fontkit';
 import { subsetFont } from './fonts';
 import { PAGE_HEIGHT, plainText, type CanvasElement, type EditorPage } from '../core/model';
-import { elementNode, shapePaths } from './scene';
+import { elementNode } from './scene';
+import { shapeDash, shapePath } from '../core/shapes';
 
 let regularBytes: Promise<ArrayBuffer> | undefined, boldBytes: Promise<ArrayBuffer> | undefined;
 async function fontBytes(bold = false): Promise<ArrayBuffer> {
@@ -239,7 +240,7 @@ export async function exportPdf(
         borderColor: color(e.color),
         borderWidth: e.strokeWidth,
         borderOpacity: e.opacity / 100,
-        borderDashArray: e.dash === 'dashed' ? [8, 5] : e.dash === 'dotted' ? [2, 4] : undefined,
+        borderDashArray: shapeDash(e.dash),
       };
       if (e.type === 'text') {
         if (e.fill !== 'transparent' || e.strokeWidth)
@@ -295,44 +296,26 @@ export async function exportPdf(
           opacity: e.opacity / 100,
           ...border,
         });
-      else if (e.type === 'shape' && e.shape && shapePaths[e.shape]) {
-        page.pushOperators(
-          pushGraphicsState(),
-          concatTransformationMatrix(e.w / 100, 0, 0, -e.h / 100, 0, 0),
-        );
-        page.drawSvgPath(shapePaths[e.shape], {
+      else if (e.type === 'shape' || (e.type === 'rect' && (e.radius || e.cornerRadii))) {
+        page.pushOperators(pushGraphicsState(), concatTransformationMatrix(1, 0, 0, -1, 0, 0));
+        page.drawSvgPath(shapePath(e), {
           x: 0,
           y: 0,
           color: e.fill === 'transparent' ? undefined : color(e.fill),
           opacity: e.opacity / 100,
           ...border,
-          borderWidth: (e.strokeWidth * 100) / Math.max(e.w, e.h),
         });
         page.pushOperators(popGraphicsState());
-      } else if (e.type === 'rect') {
-        if (e.radius) {
-          const r = Math.min(e.radius, e.w / 2, e.h / 2),
-            path = `M${r} 0 H${e.w - r} Q${e.w} 0 ${e.w} ${r} V${e.h - r} Q${e.w} ${e.h} ${e.w - r} ${e.h} H${r} Q0 ${e.h} 0 ${e.h - r} V${r} Q0 0 ${r} 0 Z`;
-          page.pushOperators(pushGraphicsState(), concatTransformationMatrix(1, 0, 0, -1, 0, 0));
-          page.drawSvgPath(path, {
-            x: 0,
-            y: 0,
-            color: e.fill === 'transparent' ? undefined : color(e.fill),
-            opacity: e.opacity / 100,
-            ...border,
-          });
-          page.pushOperators(popGraphicsState());
-        } else
-          page.drawRectangle({
-            x: 0,
-            y: 0,
-            width: e.w,
-            height: e.h,
-            color: e.fill === 'transparent' ? undefined : color(e.fill),
-            opacity: e.opacity / 100,
-            ...border,
-          });
-      }
+      } else if (e.type === 'rect')
+        page.drawRectangle({
+          x: 0,
+          y: 0,
+          width: e.w,
+          height: e.h,
+          color: e.fill === 'transparent' ? undefined : color(e.fill),
+          opacity: e.opacity / 100,
+          ...border,
+        });
       page.pushOperators(popGraphicsState());
     }
   }

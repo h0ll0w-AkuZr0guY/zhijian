@@ -345,6 +345,28 @@ select:focus-visible {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
+.element.line::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: max(100%, var(--handle-size, 10px));
+  transform: translateY(-50%);
+}
+.snap-guide {
+  position: absolute;
+  background: #2776b8;
+  pointer-events: none;
+}
+.snap-guide-label {
+  position: absolute;
+  padding: 2px 5px;
+  color: #fff;
+  background: #2167a5;
+  border-radius: 3px;
+  white-space: nowrap;
+}
 .element.text .content {
   height: 100%;
   min-height: 1em;

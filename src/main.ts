@@ -393,6 +393,7 @@ document.addEventListener('paper-selection-changed', () => {
 });
 $<HTMLSelectElement>('fontPicker').onchange = async (event) => {
   const family = (event.target as HTMLSelectElement).value;
+  if (editor.formatSelectedText('font-family', family)) return;
   editor.finishEditing();
   const current = snapshot(),
     selected = new Set(editor.getSelectedIds());

@@ -54,6 +54,7 @@ export function fitOnePage(
     e.fontSize *= scale;
     e.strokeWidth *= scale;
     e.radius *= scale;
+    if (e.cornerRadii) e.cornerRadii = e.cornerRadii.map((r) => r * scale) as typeof e.cornerRadii;
     if (e.hangingIndent) e.hangingIndent *= scale;
     if (e.letterSpacing) e.letterSpacing *= scale;
     e.html = e.html.replace(

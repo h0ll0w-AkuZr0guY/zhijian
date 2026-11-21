@@ -2,6 +2,13 @@
 
 [返回项目首页](../README.md) · [全部 Releases](https://github.com/h0ll0w-AkuZr0guY/zhijian/releases)
 
+## v1.2.1
+
+- 自由画布支持 0.1 mm、0.2 mm 等细线，导出保留矢量线宽。
+- 增加纸张中心、三等分与四等分的拖动吸附、临时参考线和精确对齐。
+- 新增直角梯形与等腰梯形，支持斜边调整、翻转、快捷旋转和独立圆角。
+- 划选文字可局部修改字体、字号、颜色及加粗，工程、页面预览与导出保留样式。
+
 ## v1.2.0
 
 2026-11-12 · [版本与安装包](https://github.com/h0ll0w-AkuZr0guY/zhijian/releases/tag/v1.2.0)

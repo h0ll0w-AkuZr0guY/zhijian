@@ -7,6 +7,8 @@ import {
   synchronizeRows,
   remapRowReferences,
 } from '../core/guides';
+import { adjustableInset, cornerValues, polygons, shapeNode } from '../core/shapes';
+import { inlineTextProperties, retainTextStyle } from '../core/text-style';
 import { mergeTextElements } from '../importers/structure';
 const $ = (id) => document.getElementById(id);
 const MM = 96 / 25.4,
@@ -15,26 +17,7 @@ const MM = 96 / 25.4,
 const VIEW_STORAGE = 'zhijian-a4-view-v1';
 let defaultFont = 'Noto Sans SC';
 let readOnly = false;
-const SHAPE_PATHS = {
-  triangle: 'M50 2 L98 98 H2 Z',
-  diamond: 'M50 2 L98 50 L50 98 L2 50 Z',
-  pentagon: 'M50 2 L98 38 L80 98 H20 L2 38 Z',
-  hexagon: 'M26 2 H74 L98 50 L74 98 H26 L2 50 Z',
-  star: 'M50 2 L62 36 L98 37 L70 59 L80 96 L50 75 L20 96 L30 59 L2 37 L38 36 Z',
-  arrow: 'M2 28 H60 V2 L98 50 L60 98 V72 H2 Z',
-  chevron: 'M2 2 H55 L98 50 L55 98 H2 L45 50 Z',
-  parallelogram: 'M26 2 H98 L74 98 H2 Z',
-};
-const SHAPE_NAMES = {
-  triangle: '三角形',
-  diamond: '菱形',
-  pentagon: '五边形',
-  hexagon: '六边形',
-  star: '五角星',
-  arrow: '箭头',
-  chevron: '燕尾箭头',
-  parallelogram: '平行四边形',
-};
+const MIN_LINE_HEIGHT = 0.01 * MM;
 let doc = { version: 1, name: '未命名文档', background: '#ffffff', elements: [] };
 let selected = new Set(),
   zoom = 0.75,
@@ -68,8 +51,14 @@ const TEXT_PROPERTIES = new Set([
 function propertyTargets(key) {
   const list = editableElements();
   if (TEXT_PROPERTIES.has(key)) return list.filter((e) => e.type === 'text');
+  if (key === 'shapeInset')
+    return list.filter((e) => e.type === 'shape' && adjustableInset(e.shape));
+  if (key.startsWith('corner-')) return list.filter(hasIndividualCorners);
   if (key === 'objectFit') return list.filter((e) => e.type === 'image');
   return list;
+}
+function hasIndividualCorners(e) {
+  return e.type === 'rect' || (e.type === 'shape' && polygons[e.shape]?.points.length === 4);
 }
 function visualBounds(e) {
   const radians = (e.rotation * Math.PI) / 180;
@@ -113,6 +102,7 @@ function scaleElements(originals, bounds, factor, x = bounds.x, y = bounds.y) {
       fontSize: original.fontSize * factor,
       strokeWidth: original.strokeWidth * factor,
       radius: original.radius * factor,
+      cornerRadii: original.cornerRadii?.map((radius) => radius * factor),
       letterSpacing: (original.letterSpacing || 0) * factor,
     });
   }
@@ -163,37 +153,13 @@ function base(type, extra = {}) {
     ...extra,
   };
 }
-function escapeHtml(s) {
-  return s.replace(
-    /[&<>"']/g,
-    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
-  );
-}
 function sanitize(html) {
   const t = document.createElement('template');
   t.innerHTML = html;
   t.content
     .querySelectorAll('script,style,iframe,object,embed,link,meta,img,svg')
     .forEach((e) => e.remove());
-  t.content.querySelectorAll('*').forEach((e) => {
-    for (const a of [...e.attributes]) if (a.name !== 'style') e.removeAttribute(a.name);
-    if (e.hasAttribute('style')) {
-      const allowed = [
-        'font-weight',
-        'font-style',
-        'text-decoration',
-        'color',
-        'font-family',
-        'font-size',
-        'letter-spacing',
-      ];
-      const styles = allowed
-        .map((k) => (e.style[k] ? `${k}:${e.style[k]}` : ''))
-        .filter(Boolean)
-        .join(';');
-      e.setAttribute('style', styles);
-    }
-  });
+  t.content.querySelectorAll('*').forEach(retainTextStyle);
   return t.innerHTML;
 }
 function render() {
@@ -234,16 +200,15 @@ function render() {
       textDecoration: e.underline ? 'underline' : 'none',
     });
     el.style.borderStyle = e.dash || 'solid';
-    if (e.type === 'line') {
+    if (
+      e.type === 'line' ||
+      e.type === 'shape' ||
+      (e.type === 'rect' && (e.radius || e.cornerRadii))
+    ) {
       el.style.background = 'transparent';
       el.style.border = 'none';
-      el.style.borderTop = `${e.h}px ${e.dash || 'solid'} ${e.color}`;
-    }
-    if (e.type === 'shape') {
-      el.style.background = 'transparent';
-      el.style.border = 'none';
-      el.innerHTML = shapeSvg(e.shape, e.fill, e.color, e.strokeWidth, e.dash);
-    }
+      el.replaceChildren(shapeNode(e));
+    } else if (e.type === 'rect') el.replaceChildren();
     if (e.type === 'text' && editing !== e.id) {
       el.innerHTML = '<div class="content">' + e.html + '</div>';
     }
@@ -270,6 +235,7 @@ function render() {
 function renderSelection() {
   $('selectionOverlay').innerHTML = '';
   renderRowGuides();
+  renderSnapGuides();
   const movable = editableElements();
   const drawBox = (e, aggregate = false) => {
     const box = document.createElement('div');
@@ -396,7 +362,7 @@ function renderLayers() {
       e.name ||
       (e.type === 'text'
         ? text.textContent.slice(0, 32) || '空文字'
-        : SHAPE_NAMES[e.shape] ||
+        : polygons[e.shape]?.name ||
           { image: '图片', rect: '矩形', ellipse: '圆形', line: '线条' }[e.type]);
     const icon = document.createElement('span');
     icon.textContent = { text: 'T', image: '▧', rect: '▭', ellipse: '○', line: '╱', shape: '◇' }[
@@ -452,13 +418,21 @@ function properties() {
     const targets = propertyTargets(key);
     const source = targets.length ? targets : list;
     const values = source.map((item) =>
-      key === 'strokeWidth' && item.type === 'line' ? item.h : item[key],
+      key === 'strokeWidth' && item.type === 'line'
+        ? round(item.h)
+        : key.startsWith('corner-')
+          ? cornerValues(item)[Number(key.slice(7))]
+          : key === 'shapeInset'
+            ? (item.shapeInset ?? 24)
+            : item[key],
     );
     const mixed = values.some((value) => value !== values[0]);
     const geometry = ['x', 'y', 'w', 'h'].includes(key);
     let value = geometry && list.length > 1 ? bounds[key] : values[0];
     if (['x', 'y', 'w', 'h'].includes(key)) value = round(value / MM);
+    if (key === 'h') input.min = list.every((item) => item.type === 'line') ? '0.01' : '1';
     input.disabled = !targets.length;
+
     input.classList.toggle('mixed-value', mixed && !geometry);
     input.dataset.mixed = String(mixed && !geometry);
     input.placeholder = mixed && !geometry ? '多个值' : '';
@@ -478,6 +452,27 @@ function properties() {
       input.add(new Option(value, value));
     input.value = value ?? '';
   });
+  $('shapeProperties').hidden = !list.some((item) =>
+    ['rect', 'shape', 'ellipse'].includes(item.type),
+  );
+  $('cornerProperties').hidden = !list.some(hasIndividualCorners);
+  const cornerLabels = list.every((item) => item.shape === 'diamond')
+    ? ['上角', '右角', '左角', '下角']
+    : ['原始左上', '原始右上', '原始左下', '原始右下'];
+  $('cornerProperties')
+    .querySelectorAll('label')
+    .forEach((label, index) => {
+      label.firstChild.textContent = cornerLabels[index];
+    });
+  $('shapeSlope').hidden = !list.some(
+    (item) => item.type === 'shape' && adjustableInset(item.shape),
+  );
+  for (const button of document.querySelectorAll('[data-flip]')) {
+    button.disabled = !movable.some((item) => item.type === 'shape' || item.type === 'rect');
+  }
+  $('textEditHint').hidden = !editing;
+  $('textColor').value = /^#[0-9a-f]{6}$/i.test(e.color) ? e.color : '#000000';
+  $('textColor').disabled = !propertyTargets('fontFamily').length;
   $('textProperties').hidden = !list.some((e) => e.type === 'text');
   $('imageProperties').hidden = !list.some((e) => e.type === 'image');
   $('properties').insertBefore($('textProperties'), $('geometryDetails'));
@@ -527,6 +522,7 @@ function startEditing(id) {
   const selection = window.getSelection();
   selection.removeAllRanges();
   selection.addRange(range);
+  rememberedRange = range.cloneRange();
   content.oninput = () => {
     e.html = sanitize(content.innerHTML);
     persist();
@@ -542,6 +538,7 @@ function finishEditing() {
     e = doc.elements.find((e) => e.id === editing);
   if (el && e) e.html = sanitize(el.querySelector('.content').innerHTML);
   editing = null;
+  rememberedRange = null;
   render();
   persist();
 }
@@ -562,6 +559,7 @@ function setZoom(value, anchor) {
   $('paperWrap').style.width = W * zoom + 'px';
   $('paperWrap').style.height = H * zoom + 'px';
   $('selectionOverlay').style.setProperty('--handle-size', 10 / zoom + 'px');
+  $('paper').style.setProperty('--handle-size', 10 / zoom + 'px');
   $('selectionOverlay').style.setProperty('--handle-offset', -5 / zoom + 'px');
   $('pageLabel').parentElement.style.width = W * zoom + 'px';
   document.dispatchEvent(new CustomEvent('paper-zoom-changed'));
@@ -629,6 +627,48 @@ function add(type, extra = {}) {
 }
 let gesture = null;
 let activeGuideId = null;
+const pageFractions = [
+  [0.25, '1/4'],
+  [1 / 3, '1/3'],
+  [0.5, '1/2 · 居中'],
+  [2 / 3, '2/3'],
+  [0.75, '3/4'],
+];
+function snapAxis(position, size, pageSize, otherEdges) {
+  const pageTargets = [0, pageSize].map((value) => ({ value }));
+  const fractions = $('fractionSnap').checked ? pageFractions : [];
+  for (const [fraction, label] of fractions)
+    pageTargets.push({ value: pageSize * fraction, label });
+  let best;
+  for (const target of [...pageTargets, ...otherEdges.map((value) => ({ value }))]) {
+    for (const edge of [position + size / 2, position, position + size]) {
+      const delta = target.value - edge;
+      if (Math.abs(delta) <= 7 / zoom && (!best || Math.abs(delta) < Math.abs(best.delta)))
+        best = { ...target, delta };
+    }
+  }
+  return best;
+}
+function renderSnapGuides() {
+  for (const [axis, target] of Object.entries(gesture?.pageSnap || {})) {
+    if (!target?.label) continue;
+    const vertical = axis === 'x';
+    const line = document.createElement('div');
+    line.className = 'snap-guide';
+    Object.assign(line.style, {
+      left: (vertical ? target.value : 0) + 'px',
+      top: (vertical ? 0 : target.value) + 'px',
+      width: (vertical ? 1 / zoom : W) + 'px',
+      height: (vertical ? H : 1 / zoom) + 'px',
+    });
+    const label = document.createElement('span');
+    label.className = 'snap-guide-label';
+    label.textContent = target.label;
+    label.style.fontSize = 11 / zoom + 'px';
+    line.append(label);
+    $('selectionOverlay').append(line);
+  }
+}
 $('viewport').addEventListener('pointerdown', (ev) => {
   if (readOnly) return;
   if (ev.button !== 0) return;
@@ -711,33 +751,26 @@ window.addEventListener('pointermove', (ev) => {
   if (gesture.kind === 'move') {
     let moveX = dx,
       moveY = dy;
+    gesture.pageSnap = {};
     if ($('snap').checked && !ev.altKey) {
       const movingIds = new Set(gesture.original.map((e) => e.id));
-      const first = gesture.original.find((e) => selected.has(e.id)) || gesture.original[0],
-        others = doc.elements.filter((e) => !movingIds.has(e.id));
-      const snapDelta = (v, size, targets) => {
-        let result = 0,
-          best = 5;
-        for (const edge of [v, v + size / 2, v + size])
-          for (const t of targets)
-            if (Math.abs(t - edge) < best) {
-              best = Math.abs(t - edge);
-              result = t - edge;
-            }
-        return result;
-      };
-      moveX += snapDelta(first.x + dx, first.w, [
-        0,
-        W / 2,
+      const bounds = boundsOf(gesture.original.filter((e) => selected.has(e.id)));
+      const others = doc.elements.filter((e) => !movingIds.has(e.id)).map(visualBounds);
+      const x = snapAxis(
+        bounds.x + dx,
+        bounds.w,
         W,
-        ...others.flatMap((e) => [e.x, e.x + e.w, e.x + e.w / 2]),
-      ]);
-      moveY += snapDelta(first.y + dy, first.h, [
-        0,
-        H / 2,
+        others.flatMap((e) => [e.x, e.x + e.w, e.x + e.w / 2]),
+      );
+      const y = snapAxis(
+        bounds.y + dy,
+        bounds.h,
         H,
-        ...others.flatMap((e) => [e.y, e.y + e.h, e.y + e.h / 2]),
-      ]);
+        others.flatMap((e) => [e.y, e.y + e.h, e.y + e.h / 2]),
+      );
+      moveX += x?.delta ?? 0;
+      moveY += y?.delta ?? 0;
+      gesture.pageSnap = { x, y };
     }
     const lead = gesture.original.find((e) => selected.has(e.id)) || gesture.original[0];
     const movingIds = new Set(gesture.original.map((e) => e.id));
@@ -753,6 +786,7 @@ window.addEventListener('pointermove', (ev) => {
         .sort((a, b) => a.distance - b.distance)[0];
       if (candidate && candidate.distance <= 8 / zoom) {
         moveY = guideY(candidate.anchor) - lead.y - baselineOffset(lead);
+        delete gesture.pageSnap.y;
         gesture.rowCandidate = candidate.anchor.id;
         activeGuideId = candidate.anchor.id;
       }
@@ -761,8 +795,12 @@ window.addEventListener('pointermove', (ev) => {
       maxX = Math.max(...gesture.original.map((e) => e.x + e.w));
     const minY = Math.min(...gesture.original.map((e) => e.y)),
       maxY = Math.max(...gesture.original.map((e) => e.y + e.h));
-    moveX = Math.max(-minX, Math.min(W - maxX, moveX));
-    moveY = Math.max(-minY, Math.min(H - maxY, moveY));
+    const clampedX = Math.max(-minX, Math.min(W - maxX, moveX));
+    const clampedY = Math.max(-minY, Math.min(H - maxY, moveY));
+    if (clampedX !== moveX) delete gesture.pageSnap.x;
+    if (clampedY !== moveY) delete gesture.pageSnap.y;
+    moveX = clampedX;
+    moveY = clampedY;
     gesture.original.forEach((o) =>
       Object.assign(
         doc.elements.find((e) => e.id === o.id),
@@ -791,8 +829,8 @@ window.addEventListener('pointermove', (ev) => {
     const sx = gesture.corner.includes('w') ? -1 : 1,
       sy = gesture.corner.includes('n') ? -1 : 1;
     let w = Math.max(8, o.w + sx * localX),
-      h = Math.max(2, o.h + sy * localY);
-    if (ev.shiftKey) {
+      h = o.type === 'line' ? o.h : Math.max(2, o.h + sy * localY);
+    if (ev.shiftKey && o.type !== 'line') {
       const ratio = o.w / o.h;
       h = w / ratio;
     }
@@ -828,6 +866,7 @@ window.addEventListener('pointerup', () => {
     synchronizeRows(doc.elements);
   }
   activeGuideId = null;
+  if (gesture) delete gesture.pageSnap;
   if (gesture?.committed) render();
   else renderSelection();
   panGesture = null;
@@ -935,6 +974,8 @@ document.querySelectorAll('[data-prop]').forEach(
       if (input.min !== '' && input.type === 'number') value = Math.max(Number(input.min), value);
       if (input.max !== '' && input.type === 'number') value = Math.min(Number(input.max), value);
       if (['x', 'y', 'w', 'h'].includes(key)) value *= MM;
+      const cssKey = { fontFamily: 'font-family', fontSize: 'font-size', color: 'color' }[key];
+      if (cssKey && formatSelectedText(cssKey, key === 'fontSize' ? value + 'pt' : value)) return;
       mutate(() => {
         const targets = propertyTargets(key);
         if (elements().length > 1 && ['x', 'y', 'w', 'h'].includes(key) && targets.length) {
@@ -944,9 +985,14 @@ document.querySelectorAll('[data-prop]').forEach(
           return;
         }
         targets.forEach((e) => {
+          if (key.startsWith('corner-')) {
+            e.cornerRadii = [...cornerValues(e)];
+            e.cornerRadii[Number(key.slice(7))] = value;
+            return;
+          }
           e[key] = value;
-          if (key === 'strokeWidth' && e.type === 'line') e.h = Math.max(0.5, value);
-          const cssKey = { fontFamily: 'font-family', fontSize: 'font-size', color: 'color' }[key];
+          if (key === 'radius') delete e.cornerRadii;
+          if (key === 'strokeWidth' && e.type === 'line') e.h = Math.max(MIN_LINE_HEIGHT, value);
           if (cssKey && e.type === 'text') e.html = clearInlineStyle(e.html, cssKey);
         });
       });
@@ -957,6 +1003,46 @@ document
   .forEach((button) => (button.onclick = () => alignSelection(button.dataset.align)));
 $('alignReference').onchange = () => {
   alignReference = $('alignReference').value;
+};
+$('pagePosition').onchange = (event) => {
+  const input = event.target;
+  if (!input.value || !editableElements().length) return;
+  const [axis, fraction] = input.value.split(':');
+  const size = axis === 'x' ? 'w' : 'h';
+  const target = Number(fraction) * (axis === 'x' ? W : H);
+  mutate(() => {
+    const movable = editableElements();
+    const bounds = boundsOf(movable);
+    const delta = target - bounds[axis] - bounds[size] / 2;
+    for (const e of boundMoveMembers(movable, doc.elements)) e[axis] += delta;
+  });
+  input.value = '';
+};
+document.querySelectorAll('[data-rotate]').forEach((button) => {
+  button.onclick = () =>
+    mutate(() => {
+      for (const e of editableElements())
+        if (['rect', 'shape', 'ellipse'].includes(e.type))
+          e.rotation = (e.rotation + Number(button.dataset.rotate)) % 360;
+    });
+});
+document.querySelectorAll('[data-flip]').forEach((button) => {
+  button.onclick = () =>
+    mutate(() => {
+      const key = button.dataset.flip;
+      for (const e of editableElements())
+        if (e.type === 'shape' || e.type === 'rect') e[key] = !e[key];
+    });
+});
+$('textColor').onchange = (event) => {
+  const value = event.target.value;
+  if (formatSelectedText('color', value)) return;
+  mutate(() => {
+    for (const e of propertyTargets('fontFamily')) {
+      e.color = value;
+      e.html = clearInlineStyle(e.html, 'color');
+    }
+  });
 };
 document
   .querySelectorAll('[data-text-align]')
@@ -973,12 +1059,14 @@ for (const key of ['bold', 'italic', 'underline']) {
   };
   $(key).onclick = () => {
     if (editing) {
+      const range = selectedTextRange();
+      if (!range) {
+        toast('请先划选要设置样式的文字');
+        return;
+      }
+      restoreTextRange(range);
       document.execCommand(key, false);
-      const el = [...$('paper').children].find((n) => n.dataset.id === editing);
-      doc.elements.find((e) => e.id === editing).html = sanitize(
-        el.querySelector('.content').innerHTML,
-      );
-      persist();
+      commitTextStyle();
     } else
       mutate(() => {
         const targets = propertyTargets(key),
@@ -995,6 +1083,95 @@ function clearInlineStyle(html, property) {
   t.innerHTML = html;
   t.content.querySelectorAll('*').forEach((el) => el.style.removeProperty(property));
   return t.innerHTML;
+}
+let rememberedRange = null;
+function editingContent() {
+  return $('paper').querySelector('.element.editing .content');
+}
+function rememberTextRange() {
+  const content = editingContent();
+  const selection = window.getSelection();
+  if (!content || !selection?.rangeCount) return;
+  const range = selection.getRangeAt(0);
+  if (content.contains(range.commonAncestorContainer))
+    rememberedRange = range.collapsed ? null : range.cloneRange();
+}
+document.addEventListener('selectionchange', rememberTextRange);
+document.addEventListener(
+  'pointerdown',
+  (event) => {
+    if (event.target.closest('#properties, #fontPicker')) rememberTextRange();
+  },
+  true,
+);
+function selectedTextRange() {
+  rememberTextRange();
+  const content = editingContent();
+  if (
+    rememberedRange &&
+    !rememberedRange.collapsed &&
+    content?.contains(rememberedRange.commonAncestorContainer) &&
+    rememberedRange.toString()
+  )
+    return rememberedRange;
+}
+function restoreTextRange(range) {
+  editingContent().focus({ preventScroll: true });
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+function commitTextStyle() {
+  const content = editingContent();
+  doc.elements.find((e) => e.id === editing).html = sanitize(content.innerHTML);
+  const selection = window.getSelection();
+  rememberedRange =
+    selection?.rangeCount && !selection.isCollapsed ? selection.getRangeAt(0).cloneRange() : null;
+  persist();
+}
+function formatSelectedText(property, value) {
+  if (!editing || !inlineTextProperties.includes(property)) return false;
+  const range = selectedTextRange();
+  if (!range) {
+    toast('请先划选要设置样式的文字');
+    return true;
+  }
+  const content = editingContent();
+  const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+  const parts = [];
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    if (!range.intersectsNode(node)) continue;
+    const start = node === range.startContainer ? range.startOffset : 0;
+    const end = node === range.endContainer ? range.endOffset : node.length;
+    if (end > start) parts.push({ node, start, end });
+  }
+  const spans = parts.map(({ node, start, end }) => {
+    if (
+      start === 0 &&
+      end === node.length &&
+      node.parentElement.tagName === 'SPAN' &&
+      node.parentElement.childNodes.length === 1
+    ) {
+      node.parentElement.style.setProperty(property, value);
+      return node.parentElement;
+    }
+    const span = document.createElement('span');
+    span.style.setProperty(property, value);
+    const segment = document.createRange();
+    segment.setStart(node, start);
+    segment.setEnd(node, end);
+    segment.surroundContents(span);
+    return span;
+  });
+  if (spans.length) {
+    const selectionRange = document.createRange();
+    selectionRange.setStart(spans[0].firstChild, 0);
+    selectionRange.setEnd(spans.at(-1).firstChild, spans.at(-1).textContent.length);
+    restoreTextRange(selectionRange);
+    commitTextStyle();
+  }
+  return true;
 }
 $('editText').onclick = () => startEditing([...selected][0]);
 $('fitText').onclick = () =>
@@ -1213,7 +1390,21 @@ function validateProject(data) {
   data.elements = data.elements.map((item) => {
     if (!['text', 'rect', 'ellipse', 'line', 'image', 'shape'].includes(item.type))
       throw Error('未知元素类型');
-    if (item.type === 'shape' && !Object.hasOwn(SHAPE_PATHS, item.shape)) throw Error('未知图形');
+    if (item.type === 'shape' && !Object.hasOwn(polygons, item.shape)) throw Error('未知图形');
+    if (
+      item.cornerRadii !== undefined &&
+      (!Array.isArray(item.cornerRadii) ||
+        item.cornerRadii.length !== 4 ||
+        item.cornerRadii.some((radius) => !Number.isFinite(radius) || radius < 0))
+    )
+      throw Error('圆角信息无效');
+    if (
+      item.shapeInset !== undefined &&
+      (!Number.isFinite(item.shapeInset) || item.shapeInset < 0 || item.shapeInset > 45)
+    )
+      throw Error('斜边参数无效');
+    if (['flipX', 'flipY'].some((key) => item[key] !== undefined && typeof item[key] !== 'boolean'))
+      throw Error('图形方向无效');
     const e = base(item.type, item);
     if (typeof e.id !== 'string' || ids.has(e.id)) e.id = uid();
     ids.add(e.id);
@@ -1539,13 +1730,6 @@ window.addEventListener(
 $('zoomIn').onclick = () => setZoom(zoom * 1.15);
 $('zoomOut').onclick = () => setZoom(zoom / 1.15);
 
-function shapeSvg(shape, fill = '#dfebe1', color = '#246b53', width = 1.5, dash = 'solid') {
-  const path = SHAPE_PATHS[shape];
-  if (!path) return '';
-  const pattern = { dashed: '8 5', dotted: '2 4' }[dash] || 'none';
-  return `<svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="${path}" fill="${escapeHtml(fill)}" stroke="${escapeHtml(color)}" stroke-width="${Number(width)}" stroke-dasharray="${pattern}" vector-effect="non-scaling-stroke" /></svg>`;
-}
-
 function copySelection(cut = false) {
   finishEditing();
   const source = elements().filter((e) => !cut || !e.locked);
@@ -1598,7 +1782,7 @@ function openAssets(kind, point) {
     button.className = 'asset-item';
     const icon = document.createElement('span');
     icon.className = 'asset-preview';
-    if (preview) icon.innerHTML = preview;
+    if (preview) icon.append(preview);
     else
       Object.assign(icon.style, {
         background: extra.fill,
@@ -1622,12 +1806,21 @@ function openAssets(kind, point) {
     addPreset('圆角矩形', 'rect', { fill: '#dfebe1', radius: 18 });
     addPreset('圆形', 'ellipse', { fill: '#dfebe1', w: 130, h: 130 });
     addPreset('椭圆', 'ellipse', { fill: '#dfebe1' });
-    for (const [shape, name] of Object.entries(SHAPE_NAMES))
+    for (const [shape, { name }] of Object.entries(polygons))
       addPreset(
         name,
         'shape',
         { shape, fill: '#dfebe1', strokeWidth: 1.5, color: '#246b53' },
-        shapeSvg(shape),
+        shapeNode(
+          base('shape', {
+            shape,
+            w: 48,
+            h: 30,
+            fill: '#dfebe1',
+            strokeWidth: 1.5,
+            color: '#246b53',
+          }),
+        ),
       );
     content.append(grid);
   } else {
@@ -1979,6 +2172,7 @@ window.paperEditor = {
     defaultFont = family;
   },
   getZoom: () => zoom,
+  formatSelectedText,
   setReadOnly: (value) => {
     if (readOnly === value) return;
     finishEditing();

@@ -1,15 +1,7 @@
 import { PAGE_HEIGHT, PAGE_WIDTH, type CanvasElement, type EditorPage } from '../core/model';
 
-export const shapePaths: Record<string, string> = {
-  triangle: 'M50 2 L98 98 H2 Z',
-  diamond: 'M50 2 L98 50 L50 98 L2 50 Z',
-  pentagon: 'M50 2 L98 38 L80 98 H20 L2 38 Z',
-  hexagon: 'M26 2 H74 L98 50 L74 98 H26 L2 50 Z',
-  star: 'M50 2 L62 36 L98 37 L70 59 L80 96 L50 75 L20 96 L30 59 L2 37 L38 36 Z',
-  arrow: 'M2 28 H60 V2 L98 50 L60 98 V72 H2 Z',
-  chevron: 'M2 2 H55 L98 50 L55 98 H2 L45 50 Z',
-  parallelogram: 'M26 2 H98 L74 98 H2 Z',
-};
+import { shapeNode } from '../core/shapes';
+
 export function elementNode(e: CanvasElement): HTMLDivElement {
   const node = document.createElement('div');
   node.dataset.elementId = e.id;
@@ -54,29 +46,14 @@ export function elementNode(e: CanvasElement): HTMLDivElement {
     });
     node.append(image);
   }
-  if (e.type === 'line') {
+  if (
+    e.type === 'line' ||
+    e.type === 'shape' ||
+    (e.type === 'rect' && (e.radius || e.cornerRadii))
+  ) {
     node.style.background = 'transparent';
     node.style.border = 'none';
-    node.style.borderTop = `${e.h}px ${e.dash || 'solid'} ${e.color}`;
-  }
-  if (e.type === 'shape' && e.shape && shapePaths[e.shape]) {
-    node.style.background = 'transparent';
-    node.style.border = 'none';
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    svg.setAttribute('viewBox', '0 0 100 100');
-    svg.setAttribute('preserveAspectRatio', 'none');
-    svg.style.width = '100%';
-    svg.style.height = '100%';
-    const path = document.createElementNS(svg.namespaceURI, 'path');
-    path.setAttribute('d', shapePaths[e.shape]);
-    path.setAttribute('fill', e.fill);
-    path.setAttribute('stroke', e.color);
-    path.setAttribute('stroke-width', String(e.strokeWidth));
-    path.setAttribute('vector-effect', 'non-scaling-stroke');
-    if (e.dash === 'dashed') path.setAttribute('stroke-dasharray', '8 5');
-    if (e.dash === 'dotted') path.setAttribute('stroke-dasharray', '2 4');
-    svg.append(path);
-    node.append(svg);
+    node.append(shapeNode(e));
   }
   return node;
 }

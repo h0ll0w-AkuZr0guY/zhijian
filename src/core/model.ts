@@ -24,6 +24,10 @@ export interface CanvasElement {
   src?: string;
   assetId?: string;
   shape?: string;
+  flipX?: boolean;
+  flipY?: boolean;
+  shapeInset?: number;
+  cornerRadii?: [number, number, number, number];
   groupId?: string;
   locked?: boolean;
   bold?: boolean;
@@ -96,6 +100,7 @@ export interface EditorBridge {
   getSelectedIds(): string[];
   setDefaultFont(family: string): void;
   getZoom(): number;
+  formatSelectedText(property: string, value: string): boolean;
   setReadOnly(value: boolean): void;
 }
 declare global {

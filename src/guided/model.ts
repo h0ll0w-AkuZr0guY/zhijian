@@ -1,3 +1,4 @@
+import { retainTextStyle } from '../core/text-style';
 import {
   clone,
   escapeHtml,
@@ -78,9 +79,7 @@ export function cleanRich(html: string): string {
       e.replaceWith(...e.childNodes);
       continue;
     }
-    const bold = Number(e.style.fontWeight) >= 600 || e.style.fontWeight === 'bold';
-    for (const attr of [...e.attributes]) e.removeAttribute(attr.name);
-    if (bold) e.style.fontWeight = '700';
+    retainTextStyle(e);
   }
   return template.innerHTML;
 }
@@ -95,7 +94,22 @@ export function sceneSignature(pages: EditorPage[], geometry = false): string {
         (e.type === 'text' ? cleanRich(e.html) : e.html) +
         (e.src || '') +
         (geometry
-          ? JSON.stringify([e.x, e.y, e.w, e.h, e.rotation, e.fill, e.color, e.strokeWidth])
+          ? JSON.stringify([
+              e.x,
+              e.y,
+              e.w,
+              e.h,
+              e.rotation,
+              e.fill,
+              e.color,
+              e.strokeWidth,
+              e.radius,
+              e.cornerRadii,
+              e.shapeInset,
+              e.flipX,
+              e.flipY,
+              e.dash,
+            ])
           : '');
       for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
     }
@@ -161,6 +175,8 @@ export function syncSceneExtras(resume: ResumeDraft, pages: EditorPage[]): void 
         next.fontSize /= scale;
         next.strokeWidth /= scale;
         next.radius /= scale;
+        if (next.cornerRadii)
+          next.cornerRadii = next.cornerRadii.map((r) => r / scale) as typeof next.cornerRadii;
         if (next.hangingIndent) next.hangingIndent /= scale;
         if (next.letterSpacing) next.letterSpacing /= scale;
         next.html = next.html.replace(
