@@ -1,5 +1,5 @@
 import { clone, escapeHtml, plainText, type Project } from '../core/model';
-import { elementNode } from '../exporters/scene';
+import { fitTextHeights } from '../core/text-layout';
 import { getField, setField, richText, cleanRich, sceneSignature } from '../guided/model';
 export type AIAction = 'optimize' | 'rewrite' | 'bold' | 'interview';
 export interface TextRangeTarget {
@@ -162,16 +162,9 @@ export function applyEdits(project: Project, sources: SourceText[], edits: TextE
     if (!source || !e || e.locked || e.html !== source.html)
       throw Error('画布内容已变化，请重新生成建议后应用');
     e.html = editedHtml(source, edit);
-    const measured = elementNode(e);
-    Object.assign(measured.style, {
-      left: '-20000px',
-      top: '0',
-      height: 'auto',
-      transform: 'none',
-    });
-    document.body.append(measured);
-    e.h = Math.max(e.h, measured.getBoundingClientRect().height + 1);
-    measured.remove();
+    const previousHeight = e.h;
+    fitTextHeights([e]);
+    if (!e.autoHeight) e.h = Math.max(previousHeight, e.h);
     // Stored block text is refreshed from the canvas before future template operations.
     next.blocks = next.blocks.filter((block) => block.id !== e.blockId);
   }

@@ -1,6 +1,7 @@
 import { PAGE_HEIGHT, PAGE_WIDTH, type CanvasElement, type EditorPage } from '../core/model';
 
 import { shapeNode } from '../core/shapes';
+import { applyTextStyle, textContentNode } from '../core/text-layout';
 
 export function elementNode(e: CanvasElement): HTMLDivElement {
   const node = document.createElement('div');
@@ -18,21 +19,10 @@ export function elementNode(e: CanvasElement): HTMLDivElement {
     background: e.fill,
     border: `${e.strokeWidth}px ${e.dash || 'solid'} ${e.color}`,
     borderRadius: e.type === 'ellipse' ? '50%' : e.radius + 'px',
-    fontFamily: e.fontFamily,
-    fontSize: (e.fontSize * 96) / 72 + 'px',
-    lineHeight: String(e.lineHeight),
-    fontWeight: e.bold ? '700' : '400',
-    fontStyle: e.italic ? 'italic' : 'normal',
-    textDecoration: e.underline ? 'underline' : 'none',
-    textAlign: e.textAlign,
-    whiteSpace: e.whiteSpace || 'pre-wrap',
-    overflowWrap: 'break-word',
-    letterSpacing: (e.letterSpacing || 0) + 'px',
   });
-  if (e.type === 'text') node.innerHTML = e.html;
-  if (e.type === 'text' && e.hangingIndent) {
-    node.style.paddingLeft = e.hangingIndent + 'px';
-    node.style.textIndent = -e.hangingIndent + 'px';
+  if (e.type === 'text') {
+    applyTextStyle(node, e);
+    node.append(textContentNode(e));
   }
   if (e.type === 'image' && e.src) {
     const image = new Image();

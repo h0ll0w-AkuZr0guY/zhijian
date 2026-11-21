@@ -183,7 +183,7 @@
               <button id="group" title="组合 Ctrl+G">组合</button
               ><button id="ungroup" title="取消组合 Ctrl+Shift+G">取消组合</button>
             </div>
-            <p class="property-note">位置移动整个选区，宽高等比缩放选区。</p>
+            <p class="property-note">位置移动整个选区。可逐项修改尺寸或缩放整个选区。</p>
           </div>
           <div id="textProperties">
             <div class="section-label">文字</div>
@@ -223,10 +223,19 @@
             <label>文字颜色<input id="textColor" type="color" /></label>
             <button id="editText" class="wide">编辑文字</button
             ><button id="fitText" class="wide">按内容适配高度</button>
+            <label class="check-label"
+              ><input id="autoTextHeight" type="checkbox" />自动适配文字高度</label
+            >
           </div>
           <details id="geometryDetails" class="property-details">
             <summary>位置与对齐</summary>
             <div class="section-label" id="elementType">位置与尺寸</div>
+            <label id="dimensionScope" hidden
+              >修改尺寸<select id="resizeScope">
+                <option value="individual">逐个元素设置</option>
+                <option value="selection">等比缩放整个选区</option>
+              </select></label
+            >
             <div class="field-grid">
               <label>X / mm<input data-prop="x" type="number" step="0.1" /></label
               ><label>Y / mm<input data-prop="y" type="number" step="0.1" /></label

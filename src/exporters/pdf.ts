@@ -4,14 +4,24 @@ import {
   pushGraphicsState,
   popGraphicsState,
   concatTransformationMatrix,
+  beginMarkedContent,
+  endMarkedContent,
   type PDFPage,
   type PDFFont,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { subsetFont } from './fonts';
-import { PAGE_HEIGHT, plainText, type CanvasElement, type EditorPage } from '../core/model';
+import {
+  PAGE_HEIGHT,
+  PAGE_WIDTH,
+  plainText,
+  type CanvasElement,
+  type EditorPage,
+} from '../core/model';
 import { elementNode } from './scene';
 import { shapeDash, shapePath } from '../core/shapes';
+import { getFontEmbedCSS, toPng } from 'html-to-image';
+import { TEXT_APPEARANCE_MARK } from '../core/pdf-marks';
 
 let regularBytes: Promise<ArrayBuffer> | undefined, boldBytes: Promise<ArrayBuffer> | undefined;
 async function fontBytes(bold = false): Promise<ArrayBuffer> {
@@ -59,13 +69,7 @@ function startElement(page: PDFPage, e: CanvasElement) {
     ),
   );
 }
-async function drawText(
-  page: PDFPage,
-  e: CanvasElement,
-  regular: PDFFont,
-  bold: PDFFont,
-  invisible = false,
-) {
+function drawSearchText(page: PDFPage, e: CanvasElement, regular: PDFFont, bold: PDFFont) {
   const node = elementNode(e);
   Object.assign(node.style, { left: '0px', top: '0px', position: 'relative', transform: 'none' });
   const host = document.createElement('div');
@@ -81,17 +85,14 @@ async function drawText(
       y: number;
       width: number;
       size: number;
-      cssColor: string;
       font: PDFFont;
-      underline: boolean;
     }
     const runs: Run[] = [];
     let textNode: Node | null;
     while ((textNode = walker.nextNode())) {
       const style = getComputedStyle(textNode.parentElement!),
         font = Number(style.fontWeight) >= 600 ? bold : regular;
-      const size = parseFloat(style.fontSize),
-        underline = !!e.underline || style.textDecorationLine.includes('underline');
+      const size = parseFloat(style.fontSize);
       let offset = 0;
       for (const char of Array.from(textNode.textContent || '')) {
         const range = document.createRange();
@@ -108,8 +109,6 @@ async function drawText(
           previous &&
           previous.font === font &&
           previous.size === size &&
-          previous.cssColor === style.color &&
-          previous.underline === underline &&
           Math.abs(previous.y - y) < 0.5 &&
           Math.abs(previous.x + previous.width - x) < 1
         ) {
@@ -122,14 +121,11 @@ async function drawText(
             y,
             width: rect.width,
             size,
-            cssColor: style.color,
             font,
-            underline,
           });
       }
     }
     for (const run of runs) {
-      const fill = color(run.cssColor);
       page.pushOperators(
         pushGraphicsState(),
         concatTransformationMatrix(1, 0, 0, -1, run.x, run.y),
@@ -139,46 +135,69 @@ async function drawText(
         y: 0,
         size: run.size,
         font: run.font,
-        color: fill,
-        opacity: invisible ? 0 : e.opacity / 100,
+        opacity: 0,
       });
       page.pushOperators(popGraphicsState());
-      if (run.underline)
-        page.drawLine({
-          start: { x: run.x, y: run.y + 2 },
-          end: { x: run.x + run.width, y: run.y + 2 },
-          thickness: 0.6,
-          color: fill,
-          opacity: invisible ? 0 : e.opacity / 100,
-        });
     }
   } finally {
     host.remove();
   }
 }
-async function rasterText(e: CanvasElement): Promise<{ data: string; height: number }> {
-  const { toPng } = await import('html-to-image');
-  const node = elementNode(e);
+async function drawTextLayer(
+  pdf: PDFDocument,
+  page: PDFPage,
+  elements: CanvasElement[],
+  fontEmbedCSS: string,
+): Promise<void> {
   const host = document.createElement('div');
-  Object.assign(host.style, { position: 'fixed', left: '-20000px', top: '0' });
-  Object.assign(node.style, {
-    position: 'relative',
-    left: '0',
-    top: '0',
-    transform: 'none',
-    opacity: '1',
-  });
-  host.append(node);
+  host.style.cssText = 'position:fixed;left:-20000px;top:0;pointer-events:none';
+  const clip = document.createElement('div');
+  clip.style.cssText = 'position:relative;overflow:hidden';
+  const layer = document.createElement('div');
+  layer.style.cssText = 'position:absolute;left:0;top:0';
+  layer.append(...elements.map(elementNode));
+  clip.append(layer);
+  host.append(clip);
   document.body.append(host);
   try {
-    const height = Math.max(e.h, node.scrollHeight);
-    node.style.height = height + 'px';
-    const data = await toPng(node, {
-      pixelRatio: 3,
-      skipFonts: true,
-      style: { position: 'relative', left: '0', top: '0' },
+    const origin = layer.getBoundingClientRect();
+    let left = PAGE_WIDTH,
+      right = 0,
+      top = PAGE_HEIGHT,
+      bottom = 0;
+    function include(rect: DOMRect): void {
+      left = Math.min(left, rect.left - origin.left);
+      right = Math.max(right, rect.right - origin.left);
+      top = Math.min(top, rect.top - origin.top);
+      bottom = Math.max(bottom, rect.bottom - origin.top);
+    }
+    for (const node of layer.children) {
+      include(node.getBoundingClientRect());
+      const range = document.createRange();
+      range.selectNodeContents(node.firstChild!);
+      for (const rect of range.getClientRects()) include(rect);
+    }
+    // Round outwards and allow for overhanging glyphs before clipping to the sheet.
+    const pad = Math.max(...elements.map((e) => e.fontSize));
+    left = Math.max(0, Math.floor(left - pad));
+    top = Math.max(0, Math.floor(top - pad));
+    right = Math.min(Math.ceil(PAGE_WIDTH), Math.ceil(right + pad));
+    bottom = Math.min(Math.ceil(PAGE_HEIGHT), Math.ceil(bottom + pad));
+    const width = right - left,
+      height = bottom - top;
+    if (width <= 0 || height <= 0) return;
+    Object.assign(clip.style, { width: width + 'px', height: height + 'px' });
+    Object.assign(layer.style, { left: -left + 'px', top: -top + 'px' });
+    const data = await toPng(clip, { pixelRatio: 3, fontEmbedCSS });
+    const image = await pdf.embedPng(data);
+    page.pushOperators(beginMarkedContent(TEXT_APPEARANCE_MARK));
+    page.drawImage(image, {
+      x: left * 0.75,
+      y: (PAGE_HEIGHT - bottom) * 0.75,
+      width: width * 0.75,
+      height: height * 0.75,
     });
-    return { data, height };
+    page.pushOperators(endMarkedContent());
   } finally {
     host.remove();
   }
@@ -222,6 +241,7 @@ export async function exportPdf(
   const bold = hasBold
     ? await pdf.embedFont(await documentFont(pages, true), { subset: false })
     : regular;
+  const fontEmbedCSS = await getFontEmbedCSS(document.body, { preferredFontFormat: 'woff2' });
   for (let index = 0; index < pages.length; index++) {
     progress(`正在生成 PDF 第 ${index + 1} / ${pages.length} 页`);
     const source = pages[index],
@@ -233,8 +253,23 @@ export async function exportPdf(
       height: page.getHeight(),
       color: color(source.background),
     });
-    // Clip the output to the same physical A4 boundary as the editor.
+    const textLayer: CanvasElement[] = [];
+    const flushTextLayer = async () => {
+      if (!textLayer.length) return;
+      await drawTextLayer(pdf, page, textLayer, fontEmbedCSS);
+      for (const text of textLayer) {
+        startElement(page, text);
+        drawSearchText(page, text, regular, bold);
+        page.pushOperators(popGraphicsState());
+      }
+      textLayer.length = 0;
+    };
     for (const e of source.elements) {
+      if (e.type === 'text') {
+        textLayer.push(e);
+        continue;
+      }
+      if (textLayer.length) await flushTextLayer();
       startElement(page, e);
       const border = {
         borderColor: color(e.color),
@@ -242,36 +277,7 @@ export async function exportPdf(
         borderOpacity: e.opacity / 100,
         borderDashArray: shapeDash(e.dash),
       };
-      if (e.type === 'text') {
-        if (e.fill !== 'transparent' || e.strokeWidth)
-          page.drawRectangle({
-            x: 0,
-            y: 0,
-            width: e.w,
-            height: e.h,
-            color: e.fill === 'transparent' ? undefined : color(e.fill),
-            opacity: e.opacity / 100,
-            ...border,
-          });
-        const systemFont = e.fontFamily !== 'Noto Sans SC' || /font-family\s*:/i.test(e.html);
-        if (systemFont) {
-          const raster = await rasterText(e),
-            image = await pdf.embedPng(raster.data);
-          page.pushOperators(
-            pushGraphicsState(),
-            concatTransformationMatrix(1, 0, 0, -1, 0, raster.height),
-          );
-          page.drawImage(image, {
-            x: 0,
-            y: 0,
-            width: e.w,
-            height: raster.height,
-            opacity: e.opacity / 100,
-          });
-          page.pushOperators(popGraphicsState());
-        }
-        await drawText(page, e, regular, bold, systemFont);
-      } else if (e.type === 'image' && e.src) {
+      if (e.type === 'image' && e.src) {
         const image = await pdf.embedPng(await rasterImage(e));
         page.pushOperators(pushGraphicsState(), concatTransformationMatrix(1, 0, 0, -1, 0, e.h));
         page.drawImage(image, { x: 0, y: 0, width: e.w, height: e.h, opacity: e.opacity / 100 });
@@ -318,6 +324,7 @@ export async function exportPdf(
         });
       page.pushOperators(popGraphicsState());
     }
+    await flushTextLayer();
   }
   return pdf.save();
 }

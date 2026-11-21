@@ -634,6 +634,30 @@ dialog > div {
   right: var(--handle-offset, -5px);
   bottom: var(--handle-offset, -5px);
 }
+.handle.n,
+.handle.s {
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+.handle.n {
+  top: var(--handle-offset, -5px);
+}
+.handle.s {
+  bottom: var(--handle-offset, -5px);
+}
+.handle.w,
+.handle.e {
+  top: 50%;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+.handle.w {
+  left: var(--handle-offset, -5px);
+}
+.handle.e {
+  right: var(--handle-offset, -5px);
+}
 .zoom-controls {
   display: inline-flex;
   align-items: center;

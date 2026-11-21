@@ -41,6 +41,7 @@ export interface CanvasElement {
   blockId?: string;
   name?: string;
   hangingIndent?: number;
+  autoHeight?: boolean;
   rowGuide?: boolean;
   rowAnchorId?: string;
   formField?: string;

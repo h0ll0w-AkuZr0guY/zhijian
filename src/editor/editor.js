@@ -1,3 +1,4 @@
+import { applyTextStyle, fitTextHeights, textContentNode } from '../core/text-layout';
 import {
   baselineOffset,
   guideY,
@@ -33,6 +34,8 @@ let canvasClipboard = [],
 let selectionTool = 'select',
   marquee = null,
   alignReference = 'selection';
+let resizeScope = '',
+  resizeSelectionKey = '';
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const uid = () =>
   crypto.randomUUID ? crypto.randomUUID() : 'e' + Date.now() + Math.random().toString(36).slice(2);
@@ -189,15 +192,6 @@ function render() {
       background: e.fill,
       borderRadius: e.type === 'ellipse' ? '50%' : e.radius + 'px',
       border: e.type === 'line' ? 'none' : `${e.strokeWidth}px solid ${e.color}`,
-      fontFamily: e.fontFamily,
-      fontSize: (e.fontSize * 96) / 72 + 'px',
-      lineHeight: e.lineHeight,
-      textAlign: e.textAlign,
-      whiteSpace: e.whiteSpace || 'pre-wrap',
-      letterSpacing: (e.letterSpacing || 0) + 'px',
-      fontWeight: e.bold ? '700' : '400',
-      fontStyle: e.italic ? 'italic' : 'normal',
-      textDecoration: e.underline ? 'underline' : 'none',
     });
     el.style.borderStyle = e.dash || 'solid';
     if (
@@ -209,15 +203,9 @@ function render() {
       el.style.border = 'none';
       el.replaceChildren(shapeNode(e));
     } else if (e.type === 'rect') el.replaceChildren();
-    if (e.type === 'text' && editing !== e.id) {
-      el.innerHTML = '<div class="content">' + e.html + '</div>';
-    }
     if (e.type === 'text') {
-      const content = el.querySelector('.content');
-      if (content) {
-        content.style.paddingLeft = (e.hangingIndent || 0) + 'px';
-        content.style.textIndent = -(e.hangingIndent || 0) + 'px';
-      }
+      applyTextStyle(el, e);
+      if (editing !== e.id) el.replaceChildren(textContentNode(e));
     }
     if (e.type === 'image') {
       if (!el.firstChild) el.append(document.createElement('img'));
@@ -249,14 +237,22 @@ function renderSelection() {
       borderWidth: 1 / zoom + 'px',
     });
     const handles = !e.locked && (aggregate || movable.length < 2);
-    if (handles)
-      for (const corner of ['nw', 'ne', 'sw', 'se']) {
+    if (handles) {
+      const directions =
+        e.type === 'line'
+          ? ['w', 'e']
+          : e.type === 'text'
+            ? ['nw', 'ne', 'sw', 'se', 'n', 's', 'w', 'e']
+            : ['nw', 'ne', 'sw', 'se'];
+      for (const corner of directions) {
         const handle = document.createElement('div');
         handle.className = 'handle ' + corner;
         handle.dataset.id = aggregate ? 'selection' : e.id;
         handle.dataset.corner = corner;
+        if (corner.length === 1) handle.title = 'ns'.includes(corner) ? '仅调整高度' : '仅调整宽度';
         box.append(handle);
       }
+    }
     $('selectionOverlay').append(box);
   };
   for (const e of elements()) {
@@ -394,9 +390,27 @@ function properties() {
   $('properties').hidden = !e;
   if (!e) return;
   const geometryList = movable.length ? movable : list;
+  const selectionKey = geometryList.map((item) => item.id).join(',');
+  if (resizeSelectionKey !== selectionKey) {
+    resizeSelectionKey = selectionKey;
+    resizeScope = geometryList.every((item) => item.type === 'line') ? 'individual' : 'selection';
+  }
+  const lineSizes = geometryList.every((item) => item.type === 'line') && individualDimensions();
+  $('dimensionScope').hidden = list.length < 2;
+  $('resizeScope').value = resizeScope;
+  $('autoTextHeight').disabled = !movable.some((item) => item.type === 'text');
+  const texts = geometryList.filter((item) => item.type === 'text');
+  $('autoTextHeight').checked = texts.length > 0 && texts.every((item) => item.autoHeight);
+  $('autoTextHeight').indeterminate =
+    texts.some((item) => item.autoHeight) && !$('autoTextHeight').checked;
   const bounds = boundsOf(geometryList);
   const units = selectionUnits(movable);
-  $('elementType').textContent = list.length > 1 ? '选区整体位置与尺寸' : '位置与尺寸';
+  $('elementType').textContent =
+    list.length < 2
+      ? '位置与尺寸'
+      : individualDimensions()
+        ? '选区位置与各元素尺寸'
+        : '选区整体位置与尺寸';
   $('selectionSummary').textContent =
     `已选 ${list.length} 项 · 可修改 ${movable.length} 项` +
     (movable.length < list.length ? ' · 锁定项跳过' : '');
@@ -427,17 +441,24 @@ function properties() {
             : item[key],
     );
     const mixed = values.some((value) => value !== values[0]);
-    const geometry = ['x', 'y', 'w', 'h'].includes(key);
-    let value = geometry && list.length > 1 ? bounds[key] : values[0];
-    if (['x', 'y', 'w', 'h'].includes(key)) value = round(value / MM);
-    if (key === 'h') input.min = list.every((item) => item.type === 'line') ? '0.01' : '1';
+    const dimension = key === 'w' || key === 'h';
+    const geometry = dimension || key === 'x' || key === 'y';
+    const overall = geometry && list.length > 1 && !(dimension && individualDimensions());
+    let value = overall ? bounds[key] : values[0];
+    if (geometry) value = round(value / MM);
+    if (key === 'h') {
+      input.min = lineSizes ? '0.01' : '1';
+      input.step = lineSizes ? '0.01' : '0.1';
+      input.parentNode.firstChild.textContent = lineSizes ? '线宽 / mm' : '高 / mm';
+    }
+    if (key === 'w') input.parentNode.firstChild.textContent = lineSizes ? '线长 / mm' : '宽 / mm';
     input.disabled = !targets.length;
 
-    input.classList.toggle('mixed-value', mixed && !geometry);
-    input.dataset.mixed = String(mixed && !geometry);
-    input.placeholder = mixed && !geometry ? '多个值' : '';
-    input.title = mixed && !geometry ? '所选元素的值不同，修改后将统一应用' : '';
-    if (mixed && !geometry && input.type === 'number') value = '';
+    input.classList.toggle('mixed-value', mixed && !overall);
+    input.dataset.mixed = String(mixed && !overall);
+    input.placeholder = mixed && !overall ? '多个值' : '';
+    input.title = mixed && !overall ? '所选元素的值不同，修改后将逐项应用' : '';
+    if (mixed && !overall && input.type === 'number') value = '';
     if (input.type === 'color' && !/^#[0-9a-f]{6}$/i.test(value)) value = '#ffffff';
     if (input.tagName === 'SELECT') {
       input.querySelector('[data-mixed-option]')?.remove();
@@ -525,6 +546,7 @@ function startEditing(id) {
   rememberedRange = range.cloneRange();
   content.oninput = () => {
     e.html = sanitize(content.innerHTML);
+    updateEditingHeight(e, el);
     persist();
   };
   content.onpaste = (ev) => {
@@ -536,7 +558,10 @@ function finishEditing() {
   if (!editing) return;
   const el = [...$('paper').children].find((n) => n.dataset.id === editing),
     e = doc.elements.find((e) => e.id === editing);
-  if (el && e) e.html = sanitize(el.querySelector('.content').innerHTML);
+  if (el && e) {
+    e.html = sanitize(el.querySelector('.content').innerHTML);
+    updateEditingHeight(e, el);
+  }
   editing = null;
   rememberedRange = null;
   render();
@@ -605,6 +630,10 @@ function add(type, extra = {}) {
     const viewportRect = $('viewport').getBoundingClientRect();
     const paperRect = $('paperWrap').getBoundingClientRect();
     const e = base(type, { ...shapeDefaults, ...lineDefaults, ...extra });
+    if (type === 'text') {
+      e.autoHeight = true;
+      fitTextHeights([e]);
+    }
     if (extra.x === undefined)
       e.x = Math.max(
         12,
@@ -826,16 +855,19 @@ window.addEventListener('pointermove', (ev) => {
       radians = (o.rotation * Math.PI) / 180;
     const localX = dx * Math.cos(radians) + dy * Math.sin(radians),
       localY = -dx * Math.sin(radians) + dy * Math.cos(radians);
-    const sx = gesture.corner.includes('w') ? -1 : 1,
-      sy = gesture.corner.includes('n') ? -1 : 1;
-    let w = Math.max(8, o.w + sx * localX),
-      h = o.type === 'line' ? o.h : Math.max(2, o.h + sy * localY);
-    if (ev.shiftKey && o.type !== 'line') {
-      const ratio = o.w / o.h;
-      h = w / ratio;
+    const sx = gesture.corner.includes('w') ? -1 : gesture.corner.includes('e') ? 1 : 0;
+    const sy = gesture.corner.includes('n') ? -1 : gesture.corner.includes('s') ? 1 : 0;
+    const w = sx ? Math.max(8, o.w + sx * localX) : o.w;
+    let h = !sy || o.type === 'line' ? o.h : Math.max(2, o.h + sy * localY);
+    if (ev.shiftKey && sx && sy && o.type !== 'line') h = (w * o.h) / o.w;
+    if (e.type === 'text' && sy && h !== o.h) e.autoHeight = false;
+    if (e.type === 'text' && !sy && e.autoHeight) {
+      e.w = w;
+      fitTextHeights([e]);
+      h = e.h;
     }
     const cx = (sx * (w - o.w)) / 2,
-      cy = (sy * (h - o.h)) / 2;
+      cy = ((sy || 1) * (h - o.h)) / 2;
     Object.assign(e, {
       w,
       h,
@@ -980,9 +1012,14 @@ document.querySelectorAll('[data-prop]').forEach(
         const targets = propertyTargets(key);
         if (elements().length > 1 && ['x', 'y', 'w', 'h'].includes(key) && targets.length) {
           const bounds = boundsOf(targets);
-          if (key === 'x' || key === 'y') targets.forEach((e) => (e[key] += value - bounds[key]));
-          else scaleElements(clone(targets), bounds, value / bounds[key]);
-          return;
+          if (key === 'x' || key === 'y') {
+            targets.forEach((e) => (e[key] += value - bounds[key]));
+            return;
+          }
+          if (!individualDimensions()) {
+            scaleElements(clone(targets), bounds, value / bounds[key]);
+            return;
+          }
         }
         targets.forEach((e) => {
           if (key.startsWith('corner-')) {
@@ -991,10 +1028,13 @@ document.querySelectorAll('[data-prop]').forEach(
             return;
           }
           e[key] = value;
+          if (key === 'h' && e.type === 'text') e.autoHeight = false;
           if (key === 'radius') delete e.cornerRadii;
           if (key === 'strokeWidth' && e.type === 'line') e.h = Math.max(MIN_LINE_HEIGHT, value);
           if (cssKey && e.type === 'text') e.html = clearInlineStyle(e.html, cssKey);
         });
+        if (['w', 'fontFamily', 'fontSize', 'lineHeight', 'strokeWidth', 'dash'].includes(key))
+          fitTextHeights(targets.filter((e) => e.type === 'text' && e.autoHeight));
       });
     }),
 );
@@ -1075,6 +1115,7 @@ for (const key of ['bold', 'italic', 'underline']) {
           e[key] = value;
           if (key === 'bold') e.html = clearInlineStyle(e.html, 'font-weight');
         });
+        fitTextHeights(targets.filter((e) => e.autoHeight));
       });
   };
 }
@@ -1123,7 +1164,9 @@ function restoreTextRange(range) {
 }
 function commitTextStyle() {
   const content = editingContent();
-  doc.elements.find((e) => e.id === editing).html = sanitize(content.innerHTML);
+  const e = doc.elements.find((e) => e.id === editing);
+  e.html = sanitize(content.innerHTML);
+  updateEditingHeight(e, content.parentElement);
   const selection = window.getSelection();
   rememberedRange =
     selection?.rangeCount && !selection.isCollapsed ? selection.getRangeAt(0).cloneRange() : null;
@@ -1174,17 +1217,27 @@ function formatSelectedText(property, value) {
   return true;
 }
 $('editText').onclick = () => startEditing([...selected][0]);
-$('fitText').onclick = () =>
-  mutate(() =>
-    elements()
-      .filter((e) => e.type === 'text' && !e.locked)
-      .forEach((e) => {
-        const el = [...$('paper').children].find((n) => n.dataset.id === e.id);
-        const c = el.querySelector('.content');
-        c.style.height = 'auto';
-        e.h = Math.max(10, c.scrollHeight);
-      }),
-  );
+function updateEditingHeight(e, box) {
+  if (!e.autoHeight) return;
+  fitTextHeights([e]);
+  box.style.height = e.h + 'px';
+}
+function individualDimensions() {
+  return selected.size < 2 || resizeScope === 'individual';
+}
+$('resizeScope').onchange = (event) => {
+  resizeScope = event.target.value;
+  properties();
+};
+$('fitText').onclick = () => mutate(() => fitTextHeights(propertyTargets('fontFamily')));
+$('autoTextHeight').onchange = (event) => {
+  const auto = event.target.checked;
+  mutate(() => {
+    const texts = propertyTargets('fontFamily');
+    texts.forEach((e) => (e.autoHeight = auto));
+    if (auto) fitTextHeights(texts);
+  });
+};
 $('noFill').onclick = () =>
   mutate(() =>
     elements()
@@ -1314,12 +1367,17 @@ document.querySelectorAll('[data-same-size]').forEach(
       const anchor = [...selected].map((id) => list.find((e) => e.id === id)).find(Boolean);
       const width = anchor.w,
         height = anchor.h;
-      mutate(() =>
+      mutate(() => {
+        const dimension = button.dataset.sameSize;
         list.forEach((e) => {
-          if (button.dataset.sameSize !== 'h') e.w = width;
-          if (button.dataset.sameSize !== 'w') e.h = height;
-        }),
-      );
+          if (dimension !== 'h') e.w = width;
+          if (dimension !== 'w') {
+            e.h = height;
+            if (e.type === 'text') e.autoHeight = false;
+          }
+        });
+        if (dimension === 'w') fitTextHeights(list.filter((e) => e.autoHeight));
+      });
     }),
 );
 function reorder(mode) {
@@ -1433,6 +1491,7 @@ function validateProject(data) {
       throw Error('元素颜色无效');
     if (e.groupId !== undefined && (typeof e.groupId !== 'string' || e.groupId.length > 128))
       throw Error('组合信息无效');
+    if (e.autoHeight !== undefined && typeof e.autoHeight !== 'boolean') delete e.autoHeight;
     e.html = sanitize(String(e.html || ''));
     return e;
   });

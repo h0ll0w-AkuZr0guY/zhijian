@@ -11,6 +11,7 @@ import {
   type EditorPage,
 } from '../core/model';
 import { OcrSession, type Progress } from './ocr';
+import { TEXT_APPEARANCE_MARK } from '../core/pdf-marks';
 import { reconstructText, normalizeContent, readingOrder, type TextFragment } from './structure';
 
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -34,6 +35,7 @@ async function extractImages(
   const viewport = page.getViewport({ scale: 1 });
   let matrix = [1, 0, 0, 1, 0, 0];
   const stack: number[][] = [];
+  const marks: (string | undefined)[] = [];
   let coverage = 0;
   for (let i = 0; i < operators.fnArray.length; i++) {
     const op = operators.fnArray[i],
@@ -41,7 +43,12 @@ async function extractImages(
     if (op === OPS.save) stack.push([...matrix]);
     else if (op === OPS.restore) matrix = stack.pop() || [1, 0, 0, 1, 0, 0];
     else if (op === OPS.transform) matrix = Util.transform(matrix, args as number[]);
+    else if (op === OPS.beginMarkedContent || op === OPS.beginMarkedContentProps) {
+      const mark = args[0] as string | { name?: string } | null;
+      marks.push(typeof mark === 'string' ? mark : mark?.name);
+    } else if (op === OPS.endMarkedContent) marks.pop();
     else if (op === OPS.paintImageXObject || op === OPS.paintInlineImageXObject) {
+      if (marks.includes(TEXT_APPEARANCE_MARK)) continue;
       try {
         const image =
           op === OPS.paintInlineImageXObject

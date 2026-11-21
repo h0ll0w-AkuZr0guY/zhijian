@@ -1,3 +1,4 @@
+import { fitTextHeights } from './core/text-layout';
 import './editor/editor.css';
 import './app.css';
 import './editor/editor.js';
@@ -401,6 +402,7 @@ $<HTMLSelectElement>('fontPicker').onchange = async (event) => {
     (e) => selected.has(e.id) && e.type === 'text',
   );
   capture();
+  const resizing = [];
   for (const page of current.pages)
     for (const e of page.elements)
       if (e.type === 'text' && !e.locked && (!hasSelectedText || selected.has(e.id))) {
@@ -411,7 +413,9 @@ $<HTMLSelectElement>('fontPicker').onchange = async (event) => {
           .querySelectorAll<HTMLElement>('[style]')
           .forEach((span) => span.style.removeProperty('font-family'));
         e.html = node.innerHTML;
+        if (e.autoHeight) resizing.push(e);
       }
+  fitTextHeights(resizing);
   if (!hasSelectedText) current.fontFamily = family;
   applyProject(current, false);
   await document.fonts.load(`14px "${family}"`);
@@ -889,6 +893,11 @@ function renderPreview(): void {
   previewPages = original
     ? originalPages()
     : layoutContent(inferSections(draft), selectedTemplate, options());
+  const textBoxes = previewPages.flatMap((page) =>
+    page.elements.filter((e) => e.type === 'text' && !e.locked),
+  );
+  textBoxes.forEach((e) => (e.autoHeight = true));
+  fitTextHeights(textBoxes);
   if ($<HTMLInputElement>('keepLocked').checked && !original) {
     project.pages.forEach((page, index) => {
       const locked = page.elements.filter(
